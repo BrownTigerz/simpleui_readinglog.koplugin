@@ -1,10 +1,5 @@
 # Reading Log for SimpleUI
 
-![Reading Log Today](images/readinglog-today.png)
-![Reading Log Monthly](images/readinglog-monthly.png)
-![Reading Log Yearly](images/readinglog-yearly.png)
-![Reading Log Settings](images/readinglog-settings.png)
-
 Runs [Reading Log](https://github.com/stevenzamora1/reading-log) (by stevenzamora1, AGPL-3.0) as SimpleUI home screen modules. No Bookshelf needed.
 
 ## Install
