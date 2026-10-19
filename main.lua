@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.5.3, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.5.5, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log) — thank you!
 -- Full license text: see LICENSE in this folder.
@@ -168,6 +168,20 @@ end
 -- "full" (fills everything between SimpleUI's status bar and nav bar).
 local function dashFull()
     return sget("dash_layout", "card") == "full" and contentTop() ~= nil
+end
+
+-- Room SimpleUI needs under the content for its page dots / arrows, so the
+-- full-screen dashboard doesn't cover them. 0 when there is only one page.
+local function pageDotsHeight(inst)
+    local win = inst and (inst.on or inst.lastwin)
+    if win and tonumber(win._total_pages) and win._total_pages <= 1 then return 0 end
+    local h = Screen:scaleBySize(28)
+    local BB = suiRequire("screens/sui_bottombar")
+    if BB and type(BB.getPaginationIconSize) == "function" then
+        local ok, icon = pcall(BB.getPaginationIconSize)
+        if ok and tonumber(icon) then h = max(h, icon + Screen:scaleBySize(8)) end
+    end
+    return h
 end
 
 local function innerWidth()
@@ -650,7 +664,7 @@ local function makeModule(inst, title)
         local fx, fy
         if inst.dashboard and dashFull() then
             fx, fy = 0, contentTop()
-            w, h = Screen:getWidth(), contentHeight()
+            w, h = Screen:getWidth(), contentHeight() - pageDotsHeight(inst)
         end
         inst.regions = nil
         local bctx = bookshelfCtx(inst, w, h)
