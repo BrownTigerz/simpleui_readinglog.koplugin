@@ -6,6 +6,13 @@ Runs [Reading Log](https://github.com/stevenzamora1/reading-log) (by stevenzamor
 1. Copy `simpleui_readinglog.koplugin` into `koreader/plugins/` (next to `simpleui.koplugin`).
 2. Restart KOReader.
 
+## Screenshots
+
+![Today](images/readinglog-today.png)
+![Monthly](images/readinglog-monthly.png)
+![Yearly](images/readinglog-yearly.png)
+![Settings](images/readinglog-settings.png)
+
 ## Put the dashboard on page 2
 1. Simple UI → Home Screen → Modules: set **Number of Pages** to 2.
 2. Tick **Reading Log · Dashboard**.
