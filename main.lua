@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.5.5, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.5.6, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log) — thank you!
 -- Full license text: see LICENSE in this folder.
@@ -172,7 +172,9 @@ end
 
 -- Room SimpleUI needs under the content for its page dots / arrows, so the
 -- full-screen dashboard doesn't cover them. 0 when there is only one page.
-local function pageDotsHeight(inst)
+-- The automatic room for the page dots; Appearance → Bottom Space adds or
+-- removes pixels on top of it.
+local function autoDotsHeight(inst)
     local win = inst and (inst.on or inst.lastwin)
     if win and tonumber(win._total_pages) and win._total_pages <= 1 then return 0 end
     local h = Screen:scaleBySize(28)
@@ -182,6 +184,11 @@ local function pageDotsHeight(inst)
         if ok and tonumber(icon) then h = max(h, icon + Screen:scaleBySize(8)) end
     end
     return h
+end
+
+local function pageDotsHeight(inst)
+    local adj = tonumber(sget("dash_bottom_adjust", 0)) or 0
+    return max(0, autoDotsHeight(inst) + adj)
 end
 
 local function innerWidth()
@@ -787,6 +794,37 @@ local function makeModule(inst, title)
                     end,
                 }
             end
+            table.insert(appearance, 1, {
+                text_func = function()
+                    local adj = tonumber(sget("dash_bottom_adjust", 0)) or 0
+                    return _("Bottom Space: ") .. (adj == 0 and _("Auto")
+                        or ((adj > 0 and "+" or "") .. adj .. " px"))
+                end,
+                help_text = _("Full Screen layout only. Room left under the dashboard for SimpleUI's page dots. Auto fits the dots; add or take away pixels from there."),
+                enabled_func = function() return sget("dash_layout", "card") == "full" end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    local SpinWidget = require("ui/widget/spinwidget")
+                    local auto = autoDotsHeight(inst)
+                    UIManager:show(SpinWidget:new{
+                        title_text = _("Bottom Space"),
+                        info_text = string.format(_("Pixels added to the automatic %d px (0 = Auto)."), auto),
+                        value = tonumber(sget("dash_bottom_adjust", 0)) or 0,
+                        value_min = -auto, value_max = 200,
+                        value_step = 2, value_hold_step = 10,
+                        default_value = 0,
+                        unit = "px",
+                        ok_text = _("Save"),
+                        callback = function(spin)
+                            sput("dash_bottom_adjust", spin.value)
+                            if touchmenu_instance and touchmenu_instance.updateItems then
+                                touchmenu_instance:updateItems()
+                            end
+                            done()
+                        end,
+                    })
+                end,
+            })
             table.insert(appearance, 1, {
                 text_func = function()
                     return _("Layout: ") .. (sget("dash_layout", "card") == "full" and _("Full Screen") or _("In The Page"))
