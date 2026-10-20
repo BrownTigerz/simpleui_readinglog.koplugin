@@ -1,30 +1,31 @@
 --[[
-Reading Log: shared code behind the alm_* Bookshelf micro-modules.
-(The files, this folder and the stored settings use the project's working
-name, "almanac"; Bookshelf remembers a layout by module file name, so those
-names never change.)
+Reading Log for Simple UI: shared code behind every Reading Log module.
+
+This is the Reading Log card kit (the alm_* Bookshelf micro-modules) ported to
+Simple UI's home screen modules. The cards are drawn exactly as before; only
+the host changed. Everything that used to come from Bookshelf (where settings
+are stored, the card colour, fonts, book records, goals, covers, opening a
+book) now goes through host.lua, which talks to Simple UI and KOReader.
 
 Ring designs and the idea of a tabbed reading dashboard: u/fishnoogz on
-Reddit. Built on Bookshelf by AndyHazz, for KOReader.
-
-This folder is NOT scanned by Bookshelf (its loader only reads .lua files that
-sit directly in micromodules/), so nothing in here is a module on its own.
-Each alm_*.lua file next to this folder is a three-line module that asks this
-kit for its spec.
+Reddit. Built for KOReader and Simple UI.
 
 Parts, each loaded once and attached to the same table:
   init.lua      this file: store, theme, drawing, text, the Canvas widget
+  host.lua      Simple UI / KOReader adapter (settings file, fonts, books,
+                goals, covers, repaints, the clock tick)
   data.lua      reading stats, book lists, covers
   panels.lua    one builder per card (banner, continue reading, rings, ...)
-  settings.lua  the long-press "Module settings" dialogs
-  modules.lua   turns a panel into a Bookshelf module spec; the dashboard
+  settings.lua  each card's options, and the dialogs (page editor, picks)
+  modules.lua   turns each panel into a Simple UI module; the dashboard
+  menus.lua     the options as Simple UI settings menu items
 
-Why modules paint their own card: Bookshelf draws every module on one shared
-card colour. These cards each have their own colour, so they fill their cell
-with a rounded panel and draw on that instead.
+Why modules paint their own card: each card has its own colour, so it fills
+its box with a rounded panel and draws on that.
 ]]
 
-local A = { VERSION = "1.0.0", NAME = "Reading Log" }
+local A = { VERSION = "1.1.0", NAME = "Reading Log" }
+A.HOST = "Simple UI"
 
 A.dir = (debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$")) or "."
 
@@ -52,12 +53,10 @@ function A.round(n) return floor(n + 0.5) end
 function A.clamp(v, lo, hi) if v < lo then return lo elseif v > hi then return hi end return v end
 
 -- Text from book metadata or typed by the reader can carry bytes the text
--- shaper chokes on; Bookshelf ships a sanitiser for exactly that.
+-- shaper chokes on (a C-level crash no pcall catches); see host.lua.
 function A.safe(s)
     if type(s) ~= "string" then s = s == nil and "" or tostring(s) end
-    local ok, SafeText = pcall(require, "lib/bookshelf_text_safe")
-    if ok and SafeText and SafeText.safe then return SafeText.safe(s) end
-    return s
+    return A.host.safeText(s)
 end
 
 function A.upper(s)
@@ -73,39 +72,18 @@ end
 function A.screen() return require("device").screen end
 
 -- ─── settings store ──────────────────────────────────────────────────────────
--- One namespace ("almanac") in Bookshelf's own micro-module data file, so
--- these settings travel and reset with the rest of Bookshelf's module data.
-
-local _mem = {}
-local function kitStore()
-    local ok, Kit = pcall(require, "lib/bookshelf_module_kit")
-    if ok and Kit and Kit.moduleStore then
-        local ok2, s = pcall(Kit.moduleStore, "almanac")
-        if ok2 and s then return s end
-    end
-    return nil
-end
+-- Reading Log keeps its settings in a file of its own,
+-- settings/readinglog.lua (see host.lua). On the first run, settings saved by
+-- the Bookshelf version are copied in.
 
 function A.get(key, default)
-    local s = kitStore()
-    if s then
-        local ok, v = pcall(s.get, s, key, default)
-        if ok then
-            if v == nil then return default end
-            return v
-        end
-    end
-    local v = _mem[key]
-    if v == nil then return default end
-    return v
+    local ok, v = pcall(A.host.get, key)
+    if ok and v ~= nil then return v end
+    return default
 end
 
 function A.set(key, value)
-    _mem[key] = value
-    local s = kitStore()
-    if s then
-        if value == nil then pcall(s.delete, s, key) else pcall(s.set, s, key, value) end
-    end
+    pcall(A.host.set, key, value)
     A.epoch = (A.epoch or 0) + 1
 end
 
@@ -216,8 +194,8 @@ end
 
 function A.inverted(c) return { 255 - c[1], 255 - c[2], 255 - c[3] } end
 
--- How the page will LOOK: dark under Bookshelf's own dark theme, and dark
--- when night mode turns a light page over.
+-- How the page will LOOK: dark when the page colour is dark, and dark when
+-- night mode turns a light page over.
 function A.pageLooksDark()
     local bg = A.pageColors()
     return (A.luma(bg) < 128) ~= A.night()
@@ -261,13 +239,12 @@ function A.tone(name)
     return buildTone(name, tinted and th.tint or th.surface, th.fg, th.border, th.thin)
 end
 
--- A card style for a card on its own in one of Bookshelf's grids: it takes
--- Bookshelf's own card colour and ink (so it follows Bookshelf's colour
--- settings and its dark theme) and draws no frame of its own, so the card
--- is Bookshelf's card and nothing sits inside it twice. Only the accents
--- come from the theme. Tinted styles keep a soft, frameless panel.
--- Colours are kept as they should LOOK; the canvas pre-inverts them at night
--- like every other card, which leaves Bookshelf's own colours as they were.
+-- A card style for a card on its own on a Simple UI screen: it takes Simple
+-- UI's own background and ink and draws no frame of its own, so the card sits
+-- on the page like Simple UI's own modules (its Frame and Background options
+-- still apply around it). Only the accents come from the theme. Tinted styles
+-- keep a soft, frameless panel. Colours are kept as they should LOOK; the
+-- canvas pre-inverts them at night like every other card.
 function A.nativeTone(name)
     name = A.toneKey(name)
     local bg, fg = A.pageColors()
@@ -279,40 +256,24 @@ function A.nativeTone(name)
     return t
 end
 
--- Whether cards on their own take Bookshelf's look (the default) or the
+-- Whether cards on their own take Simple UI's look (the default) or the
 -- theme's framed cards.
 function A.standaloneNative()
     return A.get("standalone", "native") ~= "framed"
 end
 
--- The colour of the page/card the panel sits on (Bookshelf's module card),
--- and the ink Bookshelf draws on it. Read at render time: they follow the
--- reader's own colour settings and the shelf's dark theme.
-local function rgbOf(c, fallback)
-    if type(c) == "nil" then return fallback end
-    local ok, r, g, b = pcall(function()
-        local x = c:getColorRGB32()
-        return x.r, x.g, x.b
-    end)
-    if ok and r then return { r, g, b } end
-    return fallback
-end
-
+-- The colour of the page the panel sits on (Simple UI's background), the ink
+-- Simple UI draws on it, and its muted ink. Read at render time.
 function A.pageColors()
-    local bg, fg, muted = { 0xEE, 0xEE, 0xEE }, { 0, 0, 0 }, { 0x55, 0x55, 0x55 }
-    local ok, Kit = pcall(require, "lib/bookshelf_module_kit")
-    if ok and Kit then
-        bg = rgbOf(Kit.CARD_BG, bg)
-        fg = rgbOf(Kit.COLOR_PRIMARY, fg)
-        muted = rgbOf(Kit.COLOR_MUTED, muted)
-    end
-    return bg, fg, muted
+    local ok, bg, fg, muted = pcall(A.host.pageColors)
+    if ok and bg then return bg, fg, muted end
+    return { 0xFF, 0xFF, 0xFF }, { 0, 0, 0 }, { 0x77, 0x77, 0x77 }
 end
 
 -- What the Dashboard paints behind and between its cards, as colours to
 -- PAINT (night mode already allowed for): bg, fg, whether it will look dark,
 -- an accent for headings, and `look` = the page colour as it should look when
--- the theme sets one (nil when the page is Bookshelf's own card).
+-- the theme sets one (nil when the page is Simple UI's own background).
 function A.dashPage()
     local th = A.theme()
     if th.page then
@@ -597,25 +558,31 @@ end
 function A.face(px, o)
     o = o or {}
     px = max(8, floor(px + 0.5))
+    -- (asked of Font:getFace as KOReader has it, before Simple UI's Global
+    -- Text Size scales it: the cards are drawn to fit their box)
+    if o.symbol then
+        -- icon glyphs: KOReader's bundled Nerd Font symbols
+        local Font = require("ui/font")
+        local getFace = A.host.nativeGetFace() or Font.getFace
+        local ok, face = pcall(getFace, Font, "symbols", dp(px))
+        if ok and face then return face, false end
+    end
     if o.serif then
         local Font = require("ui/font")
         local name = o.bold and "NotoSerif-Bold.ttf" or (o.italic and "NotoSerif-Italic.ttf" or "NotoSerif-Regular.ttf")
-        local ok, face = pcall(Font.getFace, Font, name, dp(px))
+        local getFace = A.host.nativeGetFace() or Font.getFace
+        local ok, face = pcall(getFace, Font, name, dp(px))
         if ok and face then return face, false end
     end
-    local ok, Fonts = pcall(require, "lib/bookshelf_fonts")
-    if ok and Fonts and Fonts.getFace then
-        local ok2, face, bold = pcall(Fonts.getFace, Fonts, "cfont", dp(px), { bold = o.bold, italic = o.italic })
-        if ok2 and face then return face, bold end
-    end
+    local ok, face, bold = pcall(A.host.face, dp(px), o)
+    if ok and face then return face, bold end
     local Font = require("ui/font")
     return Font:getFace(o.bold and "tfont" or "cfont", dp(px)), false
 end
 
+-- Single-line text that keeps a colour ink a colour (see colourtext.lua).
 local function textClass()
-    local ok, T = pcall(require, "lib/bookshelf_colour_text")
-    if ok and type(T) == "table" and T.new then return T end
-    return require("ui/widget/textwidget")
+    return A.host.textClass()
 end
 
 -- Wrapped text that composites over whatever is behind it. KOReader's
@@ -683,7 +650,7 @@ local function canvasClass()
         self.inv = (Screen.night_mode and tone and (tone.dark or tone.fixed)) and true or false
         -- Colour that sits under this canvas, in the canvas's own colour
         -- space. `page` = the Dashboard's page colour as it should LOOK, when
-        -- this card is on one; otherwise Bookshelf's module card.
+        -- this card is on one; otherwise Simple UI's background.
         if self.page then
             self.under = self.inv and self.page or A.shown(self.page)
         else
@@ -804,7 +771,7 @@ local function canvasClass()
         x, y, w, h = floor(x), floor(y), floor(w), floor(h)
         if w < 4 or h < 2 then return end
         local tone = self.tone or A.tone("ink")
-        local src = fp and A.D and A.D.cover(fp, w, h) or nil
+        local src = fp and A.D and A.D.cover(fp, w, h, o.top and "top" or nil) or nil
         local inv = self.inv
         local bw = o.border == false and 0 or max(1, floor((o.border or 1)))
         local edge = o.edge or tone.muted
@@ -866,13 +833,9 @@ local function canvasClass()
         local w, h = self.w, self.h
         self.dimen = Geom:new{ x = x, y = y, w = w, h = h }
         local px, py, pw, ph = x, y, w, h
-        -- In the hero and full-screen grids Bookshelf paints a module into an
-        -- offscreen buffer the size of the card's inside, centring it with a
-        -- small side inset. When that is exactly where we are, let the panel
-        -- run to the buffer's edges so the card's margins come out even on
-        -- all four sides. Content stays where it was laid out. Anywhere else
-        -- (the start menu, a nested panel, a buffer we are not centred in)
-        -- the panel keeps its own rectangle.
+        -- `bleed`: let the panel run to the edges of an offscreen buffer it is
+        -- centred in with a small inset (a host that paints modules that way).
+        -- Simple UI does not, so this stays off; kept for the shared layout code.
         if self.bleed and not nested then
             local Screen = A.screen()
             local bw, bh = bb:getWidth(), bb:getHeight()
@@ -942,14 +905,11 @@ function A.plural(n, one, many)
     return string.format("%d %s", n, many)
 end
 
--- Day/month names in the interface language where Bookshelf can supply them.
+-- Day/month names in the interface language (os.date gives English).
 function A.date(fmt, t)
     local s = os.date(fmt, t)
-    local ok, LocalDate = pcall(require, "lib/bookshelf_localdate")
-    if ok and LocalDate and LocalDate.localize then
-        local ok2, r = pcall(LocalDate.localize, s)
-        if ok2 and type(r) == "string" then return r end
-    end
+    local ok, r = pcall(A.host.localizeDate, s)
+    if ok and type(r) == "string" then return r end
     return s
 end
 
@@ -979,11 +939,13 @@ local function part(name)
     return chunk(A)
 end
 
+part("host")
 part("data")
 part("panels")
 part("settings")
 part("modules")
+part("menus")
 
-A.note(A.NAME .. " cards", A.VERSION, "loaded from", A.dir)
+A.note(A.NAME .. " for " .. A.HOST, A.VERSION, "loaded from", A.dir)
 
 return A
