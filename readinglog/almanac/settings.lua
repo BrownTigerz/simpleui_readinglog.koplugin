@@ -1,12 +1,17 @@
 --[[
-Reading Log settings: the dialogs behind long-press > "Module settings".
+Reading Log settings.
 
-Each card has a short dialog of its own options, followed by the rows every
-card shares: what a tap on it does, its colour, and "Look and colours" (theme,
-accents, week start), which applies to all the cards at once.
-
-Dialogs follow the pattern Bookshelf's own modules use: pick something, the
-dialog closes, the card redraws, the dialog comes back with the new value.
+Each card's options are written once, as rows (S.header / S.radio / S.input /
+S.pick / S.date), and shown two ways:
+  * as Simple UI menu items, in the module's long-press settings
+    (S.cardMenu, S.dashboardMenu): a header and the radio row after it become
+    one choice with its value on the right, an input a row that opens a text
+    or number prompt, and so on;
+  * as dialogs, for the few flows that are dialogs by nature (the Dashboard's
+    page editor, the book club's picks, a month's books).
+After the card's own options come the rows every card shares: what a tap on
+it does, its colour, its height, and "Look and colours" (theme, accents, week
+start), which applies to all the cards at once.
 ]]
 
 local A = ...
@@ -16,33 +21,33 @@ local S = {}
 A.S = S
 
 local function tr(s)
-    local ok, i18n = pcall(require, "lib/bookshelf_i18n")
-    if ok and i18n and i18n.gettext then return i18n.gettext(s) end
+    local ok, gettext = pcall(require, "gettext")
+    if ok and type(gettext) == "function" then return gettext(s) end
+    if ok and type(gettext) == "table" and getmetatable(gettext) and getmetatable(gettext).__call then
+        return gettext(s)
+    end
     return s
 end
+S.tr = tr
 
 local CHECK = "\xE2\x9C\x93 "
 local ELLIPSIS = "\xE2\x80\xA6"
 
--- Redraw the card these settings belong to.
+-- Redraw the card these settings belong to (in a settings menu: the menu and
+-- the screen it was opened on).
 local function reload(ctx)
     D.invalidate()
-    if ctx and ctx.menu and ctx.menu._reload then pcall(ctx.menu._reload, ctx.menu) end
+    A.host.repaint(ctx)
 end
 S.reload = reload
 
--- Redraw every card: a theme or text-size change touches all of them. In the
--- grids that means asking Bookshelf to rebuild the grid; the start menu's
--- own reload already redraws the whole menu.
+-- Redraw every card: a theme or accent change touches all of them.
 local function reloadAll(ctx)
     D.invalidate()
-    local bw = ctx and ctx.bw
-    if bw and ctx.surface == "hero" then
-        local ok, HeroModules = pcall(require, "lib/bookshelf_hero_modules")
-        if ok and HeroModules and HeroModules._rebuild and pcall(HeroModules._rebuild, bw) then return end
-    end
-    if ctx and ctx.menu and ctx.menu._reload then pcall(ctx.menu._reload, ctx.menu) end
+    A.host.redrawAll()
+    if ctx and ctx.menu_refresh then pcall(ctx.menu_refresh) end
 end
+S.reloadAll = reloadAll
 
 -- S.open(ctx, title, rows_fn, all): rows_fn(api) returns ButtonDialog rows.
 --   api.again()   show this dialog again (nothing changed)
@@ -68,11 +73,11 @@ function S.open(ctx, title, rows_fn, all)
     UIManager:show(dialog)
 end
 
-function S.header(text) return { { text = text, enabled = false } } end
+function S.header(text) return { { text = text, enabled = false }, _sui = { kind = "header", text = text } } end
 
 -- A row of radio buttons. options = { { value, label }, ... }
 function S.radio(api, options, current, on_pick)
-    local row = {}
+    local row = { _sui = { kind = "radio", options = options, current = current, on_pick = on_pick } }
     for _, opt in ipairs(options) do
         local active = opt[1] == current
         row[#row + 1] = {
@@ -98,7 +103,7 @@ end
 function S.input(api, label, value, on_save, o)
     o = o or {}
     local shown = (value == nil or value == "") and (o.empty_label or "not set") or shorten(value, 28)
-    return { {
+    return { _sui = { kind = "input", label = label, value = value, on_save = on_save, o = o }, {
         text = label .. ": " .. shown,
         callback = function()
             api.close()
@@ -144,7 +149,7 @@ end
 function S.date(api, label, value, on_save)
     local y, m, d = A.parseYmd(value)
     local shown = y and (d .. " " .. A.date("%b", os.time{ year = y, month = m, day = d, hour = 12 }) .. " " .. y) or "not set"
-    return { {
+    return { _sui = { kind = "date", label = label, value = value, on_save = on_save, shown = shown }, {
         text = label .. ": " .. shown,
         callback = function()
             api.close()
@@ -175,7 +180,7 @@ function S.pick(ctx, api, label, options, current, on_pick)
     for _, opt in ipairs(options) do
         if opt[1] == current then shown = shorten(opt[2], 28) end
     end
-    return { {
+    return { _sui = { kind = "pick", label = label, options = options, current = current, on_pick = on_pick }, {
         text = label .. ": " .. shown,
         callback = function()
             api.close()
@@ -197,6 +202,52 @@ function S.pick(ctx, api, label, options, current, on_pick)
                 rows[#rows + 1] = { { text = tr("Back"), callback = function() sub.close(); api.again() end } }
                 return rows
             end)
+        end,
+    } }
+end
+
+-- "Label: a, b" row that opens a list to tick any number from (none = any).
+-- options = { { value, label }, ... }; current = list of values.
+function S.multi(ctx, api, label, options, current, on_change, any_label)
+    current = type(current) == "table" and current or {}
+    local shown = #current == 0 and (any_label or "any") or shorten(table.concat(current, ", "), 28)
+    return { _sui = { kind = "multi", label = label, options = options, current = current, on_change = on_change,
+                      any_label = any_label }, {
+        text = label .. ": " .. shown,
+        callback = function()
+            api.close()
+            local function show()
+                S.open(ctx, label, function(sub)
+                    local on = {}
+                    for _, v in ipairs(current) do on[v:lower()] = true end
+                    local rows, line = {}, {}
+                    rows[#rows + 1] = { { text = ((#current == 0) and CHECK or "") .. (any_label or "Any"), callback = function()
+                        current = {}
+                        on_change(nil)
+                        sub.close(); show()
+                    end } }
+                    for _, opt in ipairs(options) do
+                        local v = opt[1]
+                        line[#line + 1] = {
+                            text = (on[v:lower()] and CHECK or "") .. shorten(opt[2], 26),
+                            callback = function()
+                                local list = {}
+                                for _, cur in ipairs(current) do if cur:lower() ~= v:lower() then list[#list + 1] = cur end end
+                                if not on[v:lower()] then list[#list + 1] = v end
+                                current = list
+                                on_change(#list > 0 and list or nil)
+                                sub.close(); show()
+                            end,
+                        }
+                        if #line == 2 then rows[#rows + 1] = line; line = {} end
+                    end
+                    if #line > 0 then rows[#rows + 1] = line end
+                    if #options == 0 then rows[#rows + 1] = S.header("Nothing to choose from yet") end
+                    rows[#rows + 1] = { { text = tr("Back"), callback = function() sub.close(); reload(ctx); api.again() end } }
+                    return rows
+                end)
+            end
+            show()
         end,
     } }
 end
@@ -235,14 +286,11 @@ ROWS.continue = function(env, api)
 end
 
 ROWS.activity = function(env, api)
-    local Store = select(2, pcall(require, "lib/bookshelf_settings_store"))
     return {
         S.input(api, "Pages a day", env.cfg("page_goal", 30), function(v) env.setcfg("page_goal", v) end,
             { number = true, min = 1, max = 2000 }),
-        S.input(api, "Minutes a day", D.dailyMinutesGoal(), function(v)
-            if type(Store) == "table" and Store.save then pcall(Store.save, "micromodule_reading_goal_daily", v) end
-            A.epoch = A.epoch + 1
-        end, { number = true, min = 1, max = 1440, description = "Shared with Bookshelf's Reading goals card." }),
+        S.input(api, "Minutes a day", D.dailyMinutesGoal(), function(v) D.setDailyMinutesGoal(v) end,
+            { number = true, min = 1, max = 720, description = "Shared with Simple UI's Reading goals (daily goal)." }),
         S.header("Streak ring fills at"),
         S.radio(api, { { 7, "7 days" }, { 14, "14 days" }, { 30, "30 days" } },
             tonumber(env.cfg("streak_goal", 7)) or 7, function(v) env.setcfg("streak_goal", v) end),
@@ -251,12 +299,15 @@ end
 
 ROWS.goal = function(env, api)
     local target, other = D.yearGoal()
-    return {
+    local rows = {
         S.input(api, "Books this year", target, function(v) D.setYearGoal(v) end,
-            { number = true, min = 1, max = 1000, description = "Shared with Bookshelf's Reading goals card." }),
-        S.input(api, "Read outside KOReader", other, function(v) D.setOtherBooks(v) end,
-            { number = true, min = 0, max = 1000, description = "Paper books, audiobooks or another reader. Added to this year's count." }),
+            { number = true, min = 1, max = 365, description = "Shared with Simple UI's Reading goals (annual goal)." }),
     }
+    if A.host.ownOtherBooks() then
+        rows[#rows + 1] = S.input(api, "Read outside KOReader", other, function(v) D.setOtherBooks(v) end,
+            { number = true, min = 0, max = 1000, description = "Paper books, audiobooks or another reader. Added to this year's count." })
+    end
+    return rows
 end
 
 ROWS.tbr = function(env, api, ctx)
@@ -294,6 +345,294 @@ ROWS.year_covers = function(env, api)
         S.header("Layout"),
         S.radio(api, { { "wall", "Cover wall" }, { "months", "Stacked by month" } }, env.cfg("layout", "wall"),
             function(v) env.setcfg("layout", v ~= "wall" and v or nil) end),
+    }
+end
+
+ROWS.challenge = function(env, api)
+    local metric = env.cfg("metric", "auto")
+    local manual = tonumber(env.cfg("target", nil))
+    local auto = D.challenge(nil, metric, nil)
+    local unit = auto and ({ pages = "pages", minutes = "minutes", days = "days" })[auto.metric] or ""
+    local rows = {
+        S.header("The challenge counts"),
+        S.radio(api, { { "auto", "Auto" }, { "pages", "Pages" }, { "minutes", "Minutes" }, { "days", "Reading days" } },
+            metric, function(v) env.setcfg("metric", v ~= "auto" and v or nil) end),
+        S.input(api, "Target", manual, function(v) env.setcfg("target", v) end, {
+            number = true, min = 1, max = 1000000, start = auto and auto.target or nil,
+            step = (auto and auto.metric == "days") and 1 or 10,
+            empty_label = "auto" .. (auto and (" (" .. A.thousands(auto.target) .. " " .. unit .. ")") or ""),
+            description = "How many " .. (unit ~= "" and unit or "pages, minutes or days") .. " to read this month.",
+        }),
+    }
+    if manual then
+        rows[#rows + 1] = { { text = "Use the automatic target", callback = function()
+            env.setcfg("target", nil)
+            api.changed()
+        end } }
+    end
+    rows[#rows + 1] = S.header("Auto takes turns month by month and aims a little above your last three months.")
+    return rows
+end
+
+ROWS.forecast = function(env, api)
+    return {
+        S.header("Books listed"),
+        S.radio(api, { { 1, "1" }, { 2, "2" }, { 3, "3" } }, tonumber(env.cfg("count", 3)) or 3,
+            function(v) env.setcfg("count", v) end),
+    }
+end
+
+-- What a Control centre button can run: these KOReader actions (each with
+-- an icon of its own) or any of Simple UI's Quick Actions. (The Bookshelf
+-- version used Bookshelf's action chooser and icon library.)
+local GL = {
+    wifi = "\xEE\xB2\xA8", night = "\xEE\xB2\x93", bulb = "\xEE\xB7\xA6", sun = "\xEE\x9F\x9F",
+    flame = "\xEF\x92\x90", rotate = "\xEE\xAD\xB4", calendar = "\xEE\x9F\xAC", chart = "\xEE\xA0\xA7",
+    sleep = "\xEE\xAE\xB1", search = "\xEE\xA9\x88", book = "\xEE\x9E\xBD", history = "\xEE\xA7\x99",
+    star = "\xEE\xAF\x8D", heart = "\xEE\xA7\x90", library = "\xEE\xA8\xB0", folder = "\xEE\xA5\x8A",
+    home = "\xEE\xA7\x9B", refresh = "\xEE\xAD\x8F", sync = "\xEE\xAF\xA5", power = "\xEE\xAC\xA4",
+    battery = "\xEE\x9D\xB8", timer = "\xEE\xB0\x9A", bookmark = "\xEE\x9E\xBF", note = "\xEE\xAA\x9D",
+    dictionary = "\xEE\xB4\x9C", translate = "\xEE\xB3\x89", tag = "\xEE\xAF\xB8", shuffle = "\xEE\xAE\x9C",
+    download = "\xEE\xA1\xA1", contrast = "\xEE\xA2\x94", lock = "\xEE\xA8\xBD", eye = "\xEE\xA4\x87",
+    image = "\xEE\xA7\xA8", coffee = "\xEE\xA1\xB5", headphones = "\xEE\xA7\x8A", wrench = "\xEE\xB2\xB6",
+    puzzle = "\xEE\xAC\xB0",
+}
+S.ICON_ORDER = { "wifi", "night", "bulb", "sun", "flame", "rotate", "calendar", "chart", "sleep", "search",
+    "book", "bookmark", "history", "star", "heart", "library", "folder", "home", "refresh", "sync", "power",
+    "battery", "timer", "note", "dictionary", "translate", "tag", "shuffle", "download", "contrast", "lock",
+    "eye", "image", "coffee", "headphones", "wrench", "puzzle" }
+S.ICONS = GL
+
+-- need = a Device check the action needs to do anything here
+S.CONTROL_ACTIONS = {
+    { id = "toggle_wifi", label = "Wi-Fi", icon = GL.wifi, need = "hasWifiToggle" },
+    { id = "night_mode", label = "Night mode", icon = GL.night },
+    { id = "toggle_frontlight", label = "Light", icon = GL.bulb, need = "hasFrontlight" },
+    { id = "show_frontlight_dialog", label = "Light settings", icon = GL.sun, need = "hasFrontlight" },
+    { id = "toggle_rotation", label = "Rotate", icon = GL.rotate },
+    { id = "stats_calendar_view", label = "Calendar", icon = GL.calendar },
+    { id = "reading_progress", label = "Progress", icon = GL.chart },
+    { id = "suspend", label = "Sleep", icon = GL.sleep, need = "canSuspend" },
+    { id = "file_search", label = "Search", icon = GL.search },
+    { id = "open_previous_document", label = "Last book", icon = GL.book },
+    { id = "history", label = "History", icon = GL.history },
+    { id = "favorites", label = "Favorites", icon = GL.star },
+    { id = "collections", label = "Collections", icon = GL.library },
+    { id = "filemanager", label = "Files", icon = GL.folder },
+    { id = "full_refresh", label = "Refresh screen", icon = GL.refresh },
+    { id = "screenshot", label = "Screenshot", icon = GL.image },
+    { id = "restart", label = "Restart", icon = GL.power, need = "canRestart" },
+}
+
+local function deviceCan(need)
+    if not need then return true end
+    local ok, Device = pcall(require, "device")
+    if not (ok and Device and type(Device[need]) == "function") then return true end
+    local ok2, yes = pcall(Device[need], Device)
+    return (not ok2) or (yes and true or false)
+end
+
+--- { { entry, text } } for every action a button can be given.
+function S.controlChoices()
+    local out = {}
+    for _, a in ipairs(S.CONTROL_ACTIONS) do
+        if deviceCan(a.need) then
+            out[#out + 1] = { { label = a.label, icon = a.icon, action = { [a.id] = true } }, a.icon .. "  " .. a.label }
+        end
+    end
+    for _, qa in ipairs(A.host.quickActions()) do
+        out[#out + 1] = { { label = qa.label, icon = GL.puzzle, qa = qa.id }, GL.puzzle .. "  Quick action: " .. qa.label }
+    end
+    return out
+end
+
+local function sameAction(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    if type(a.qa) == "string" or type(b.qa) == "string" then return a.qa == b.qa end
+    local ka = type(a.action) == "table" and next(a.action)
+    local kb = type(b.action) == "table" and next(b.action)
+    return ka ~= nil and ka == kb
+end
+
+-- One Control centre button: its action, icon and name.
+function S.controlButton(ctx, i, back)
+    local function current() return A.controlButtons(8)[i] end
+    local function again() S.controlButton(ctx, i, back) end
+    local function changed(fields)
+        local copy = {}
+        for k, v in pairs(current()) do copy[k] = v end
+        for k, v in pairs(fields) do copy[k] = v end
+        A.setControlButton(i, copy)
+        S.reload(ctx)
+    end
+    S.open(ctx, "Button " .. i, function(api)
+        local e = current()
+        local rows = {}
+        rows[#rows + 1] = S.header((e.icon and (e.icon .. "  ") or "") .. tostring(e.label or "an action"))
+        rows[#rows + 1] = { { text = "Action" .. ELLIPSIS, callback = function()
+            api.close()
+            S.open(ctx, "Button " .. i .. ": action", function(sub)
+                local list = {}
+                for _, opt in ipairs(S.controlChoices()) do
+                    list[#list + 1] = { {
+                        text = (sameAction(opt[1], e) and CHECK or "") .. shorten(opt[2], 44),
+                        callback = function()
+                            sub.close()
+                            -- a new action brings its own name and icon
+                            local entry = {}
+                            for k, v in pairs(opt[1]) do entry[k] = v end
+                            A.setControlButton(i, entry)
+                            S.reload(ctx)
+                            again()
+                        end,
+                    } }
+                end
+                list[#list + 1] = { { text = tr("Back"), callback = function() sub.close(); again() end } }
+                return list
+            end)
+        end } }
+        rows[#rows + 1] = { { text = "Icon" .. ELLIPSIS, callback = function()
+            api.close()
+            S.open(ctx, "Button " .. i .. ": icon", function(sub)
+                local list, line = {}, {}
+                for _, name in ipairs(S.ICON_ORDER) do
+                    local g = GL[name]
+                    line[#line + 1] = { text = ((e.icon == g) and CHECK or "") .. g, callback = function()
+                        sub.close()
+                        changed({ icon = g })
+                        again()
+                    end }
+                    if #line == 6 then list[#list + 1] = line; line = {} end
+                end
+                if #line > 0 then list[#list + 1] = line end
+                list[#list + 1] = { { text = tr("Back"), callback = function() sub.close(); again() end } }
+                return list
+            end)
+        end } }
+        rows[#rows + 1] = S.input(api, "Name", e.label or "", function(v) changed({ label = v }) end)
+        rows[#rows + 1] = { { text = "Put this button back as it came", callback = function()
+            A.setControlButton(i, nil)
+            api.changed()
+        end } }
+        if back then
+            rows[#rows + 1] = { { text = tr("Back"), callback = function() api.close(); back() end } }
+        end
+        return rows
+    end)
+end
+
+ROWS.control = function(env, api, ctx)
+    local count = A.clamp(tonumber(env.cfg("count", 6)) or 6, 1, 8)
+    local function setCount(v) env.setcfg("count", v) end
+    local four = S.radio(api, { { 1, "1" }, { 2, "2" }, { 3, "3" }, { 4, "4" } }, count, setCount)
+    local eight = S.radio(api, { { 5, "5" }, { 6, "6" }, { 7, "7" }, { 8, "8" } }, count, setCount)
+    -- as a menu, one choice of all eight
+    four._sui.options = { { 1, "1" }, { 2, "2" }, { 3, "3" }, { 4, "4" }, { 5, "5" }, { 6, "6" }, { 7, "7" }, { 8, "8" } }
+    eight._sui = { kind = "skip" }
+    local rows = { S.header("Buttons"), four, eight }
+    local list = A.controlButtons(count)
+    -- from a settings menu the dialog closes back to the menu
+    local back = (not api.menu) and function()
+        S.card("control", ctx, function() return A.makeEnv("control", ctx, 0, 0) end)
+    end or nil
+    for i = 1, count do
+        rows[#rows + 1] = { { text = i .. ". " .. tostring(list[i].label or "an action") .. ELLIPSIS, callback = function()
+            api.close()
+            S.controlButton(ctx, i, back)
+        end } }
+    end
+    rows[#rows + 1] = S.header("Front light")
+    local bright = S.radio(api, { { true, "Brightness shown" }, { false, "Brightness hidden" } },
+        env.cfg("brightness", true) ~= false, function(v) if v then env.setcfg("brightness", nil) else env.setcfg("brightness", false) end end)
+    local warm = S.radio(api, { { true, "Warmth shown" }, { false, "Warmth hidden" } },
+        env.cfg("warmth", true) ~= false, function(v) if v then env.setcfg("warmth", nil) else env.setcfg("warmth", false) end end)
+    bright._sui.title, warm._sui.title = "Brightness", "Warmth"
+    rows[#rows + 1] = bright
+    rows[#rows + 1] = warm
+    return rows
+end
+
+ROWS.mini = function(env, api, ctx)
+    local options = { { "none", "Nothing" } }
+    for _, k in ipairs(A.MINI_TILES) do options[#options + 1] = { k, A.MINI_LABEL[k] } end
+    local rows = { S.header("Small cards, left to right (as many as fit)") }
+    for i = 1, A.MINI_MAX do
+        rows[#rows + 1] = S.pick(ctx, api, "Card " .. i, options, env.cfg("tile" .. i, A.MINI_DEFAULT[i] or "none"),
+            function(v) env.setcfg("tile" .. i, v) end)
+    end
+    local control = { { text = "Control centre buttons" .. ELLIPSIS, callback = function()
+        api.close()
+        S.card("control", ctx, function() return A.makeEnv("control", ctx, 0, 0) end)
+    end } }
+    -- as a menu: the Control centre's own settings, one level down
+    control._sui = { kind = "submenu", label = "Control centre buttons",
+        rows_fn = function() return ROWS.control(A.makeEnv("control", ctx, 0, 0), api, ctx) end }
+    rows[#rows + 1] = control
+    rows[#rows + 1] = S.header("Rings goals, the challenge and the buttons are shared with their own cards.")
+    return rows
+end
+
+ROWS.compare = function(env, api)
+    return {
+        S.header("Compare"),
+        S.radio(api, { { "week", "This week" }, { "month", "This month" }, { "year", "This year" } },
+            env.cfg("period", "week"), function(v) env.setcfg("period", v ~= "week" and v or nil) end),
+        S.header("Shows"),
+        S.radio(api, { { "time", "Time read" }, { "pages", "Pages" }, { "both", "Both" } },
+            env.cfg("show", "time"), function(v) env.setcfg("show", v ~= "time" and v or nil) end),
+    }
+end
+
+ROWS.library = function(env, api)
+    return {
+        S.header("Counts every book in your home folder, every 15 minutes at most."),
+        { { text = "Count again now", callback = function()
+            D.recountLibrary()
+            api.changed()
+        end } },
+    }
+end
+
+ROWS.authors = function(env, api)
+    return {
+        S.header("Most read by"),
+        S.radio(api, { { "books", "Books finished" }, { "time", "Time read" } }, env.cfg("by", "books"),
+            function(v) env.setcfg("by", v ~= "books" and v or nil) end),
+        S.header("Authors listed"),
+        S.radio(api, { { 3, "3" }, { 5, "5" }, { 8, "8" } }, tonumber(env.cfg("count", 5)) or 5,
+            function(v) env.setcfg("count", v ~= 5 and v or nil) end),
+    }
+end
+
+ROWS.pick = function(env, api, ctx)
+    local lib = D.library() or { books = {} }
+    local function values(field)
+        local out = {}
+        for _, v in ipairs(D.libraryValues(lib, field)) do out[#out + 1] = { v.name, v.name .. " (" .. v.n .. ")" } end
+        return out
+    end
+    local function choose(key) return function(v) env.setcfg(key, v) end end
+    return {
+        S.header("A new pick"),
+        S.radio(api, { { "day", "Every day" }, { "week", "Every week" }, { "month", "Every month" }, { "tap", "When I tap Another" } },
+            env.cfg("every", "week"), function(v) env.setcfg("every", v ~= "week" and v or nil) end),
+        S.pick(ctx, api, "Pick from", collectionOptions("The whole library"), env.cfg("coll", ""), choose("coll")),
+        S.multi(ctx, api, "Only these genres", values("genres"), env.cfg("genres", nil), choose("genres"), "Any genre"),
+        S.multi(ctx, api, "Only these authors", values("authors"), env.cfg("authors", nil), choose("authors"), "Any author"),
+        S.header("Only books you haven't started. In a series, only the next one."),
+        S.header("Tapping the cover"),
+        S.radio(api, { { "open", "Opens the book" }, { "details", "Shows book details" } },
+            env.cfg("tap", "open"), function(v) env.setcfg("tap", v ~= "open" and v or nil) end),
+    }
+end
+
+ROWS.quote = function(env, api)
+    return {
+        S.header("A new highlight from your books each day."),
+        { { text = "Show another quote", callback = function()
+            D.nextQuote()
+            api.changed()
+        end } },
     }
 end
 
@@ -403,14 +742,11 @@ ROWS.bookclub = function(env, api, ctx)
 end
 
 ROWS.week_rings = function(env, api)
-    local Store = select(2, pcall(require, "lib/bookshelf_settings_store"))
     return {
         S.input(api, "Pages a day", A.get("activity_page_goal", 30), function(v) A.set("activity_page_goal", v) end,
             { number = true, min = 1, max = 2000, description = "Shared with the Activity rings card." }),
-        S.input(api, "Minutes a day", D.dailyMinutesGoal(), function(v)
-            if type(Store) == "table" and Store.save then pcall(Store.save, "micromodule_reading_goal_daily", v) end
-            A.epoch = A.epoch + 1
-        end, { number = true, min = 1, max = 1440, description = "Shared with Bookshelf's Reading goals card." }),
+        S.input(api, "Minutes a day", D.dailyMinutesGoal(), function(v) D.setDailyMinutesGoal(v) end,
+            { number = true, min = 1, max = 720, description = "Shared with Simple UI's Reading goals (daily goal)." }),
     }
 end
 
@@ -502,10 +838,10 @@ function S.look(ctx, back)
                 accentPicker(ctx, "Second accent", "accent2", (not matched) and a2 or nil,
                     "Matched to the first", again)
             end } },
-            -- Cards placed on their own in Bookshelf's grids (not in the
-            -- Dashboard): Bookshelf's card as theirs, or the theme's frame.
+            -- Cards placed on their own on a Simple UI screen (not in the
+            -- Dashboard): Simple UI's look, or the theme's frame.
             S.header("Cards on their own"),
-            S.radio(api, { { "native", "Match Bookshelf" }, { "framed", "Framed, in the theme" } },
+            S.radio(api, { { "native", "Match Simple UI" }, { "framed", "Framed, in the theme" } },
                 A.standaloneNative() and "native" or "framed",
                 function(v) A.set("standalone", v ~= "native" and v or nil) end),
             S.header("Week starts on"),
@@ -537,28 +873,19 @@ function S.diagnostics(ctx, back)
         local Screen = A.screen()
         local Device = safe(function() return require("device") end, {})
         local ko = safe(function() return require("version"):getCurrentRevision() end, "?")
-        -- Bookshelf's version, from the _meta.lua beside the code that is running
-        local shelf = safe(function()
-            local Kit = require("lib/bookshelf_module_kit")
-            local fn
-            for _, v in pairs(Kit) do if type(v) == "function" then fn = v break end end
-            local src = debug.getinfo(fn, "S").source:gsub("^@", "")
-            return dofile(src:match("^(.*)/lib/[^/]*$") .. "/_meta.lua").version
-        end, "?")
-        local fs = ctx and ctx.bw and ctx.bw._micro_fullscreen
+        local host_v = safe(function() return A.host.version() end, "?")
         local n = A.counts
         local lines = {
-            A.NAME .. " " .. A.VERSION .. "  \xC2\xB7  Bookshelf " .. tostring(shelf),
+            A.NAME .. " " .. A.VERSION .. "  \xC2\xB7  Simple UI " .. tostring(host_v),
             "KOReader " .. tostring(ko),
             tostring(Device.model or "?") .. "  \xC2\xB7  " .. Screen:getWidth() .. "x" .. Screen:getHeight()
                 .. "  \xC2\xB7  colour " .. yn(safe(function() return Screen:isColorEnabled() end, false)),
             "Night mode " .. yn(Screen.night_mode) .. "  \xC2\xB7  page looks " .. (A.pageLooksDark() and "dark" or "light"),
             "Hardware dithering " .. yn(Screen.hw_dithering) .. "  \xC2\xB7  avoid flashes "
                 .. yn(safe(function() return G_reader_settings:isTrue("avoid_flashing_ui") end, false)),
-            "Theme " .. A.themeId() .. "  \xC2\xB7  refresh " .. A.refreshMode()
-                .. "  \xC2\xB7  in full-screen view: " .. (fs and "yes" or "no"),
-            "Opened " .. n.views .. "  \xC2\xB7  flashes asked " .. n.flashes .. "  \xC2\xB7  clock re-inks " .. n.reinks,
-            "Clock updates narrowed " .. n.narrowed .. "  \xC2\xB7  stray pixels stopped " .. n.clipped,
+            "Theme " .. A.themeId() .. "  \xC2\xB7  cards on their own: " .. (A.standaloneNative() and "Simple UI look" or "framed"),
+            "Settings file: " .. tostring(safe(function() return require("datastorage"):getSettingsDir() end, "?")) .. "/readinglog.lua",
+            "Screen cleans " .. n.cleans .. "  \xC2\xB7  stray pixels stopped " .. n.clipped,
         }
         local rows = {}
         for _, l in ipairs(lines) do rows[#rows + 1] = S.header(l) end
@@ -575,12 +902,12 @@ end
 
 -- What a tap on a card does: the card's own thing (open the book, list a
 -- month's books, the reading calendar), the reading calendar or progress,
--- or anything else KOReader or a plugin can do, picked with Bookshelf's own
--- action chooser (the one its Action module and start menu use).
+-- or any of Simple UI's Quick Actions.
 local BUILTIN_TAPS = {
     { id = "stats_calendar_view", label = "Reading calendar" },
     { id = "reading_progress", label = "Reading progress" },
 }
+S.BUILTIN_TAPS = BUILTIN_TAPS
 
 function S.tapLabel(name)
     local e = A.tapAction(name)
@@ -588,42 +915,49 @@ function S.tapLabel(name)
     return e.label or "an action"
 end
 
+-- The current choice as one value: "own", a dispatcher name, or "qa:<id>".
+function S.tapValue(name)
+    local e = A.tapAction(name)
+    if not e then return "own" end
+    if type(e.qa) == "string" then return "qa:" .. e.qa end
+    if type(e.action) == "table" then return (next(e.action)) or "own" end
+    return "own"
+end
+
+function S.setTapValue(name, v, label)
+    if v == "own" or v == nil then
+        A.set(name .. "_tap_action", nil)
+    elseif type(v) == "string" and v:sub(1, 3) == "qa:" then
+        A.set(name .. "_tap_action", { label = label, qa = v:sub(4) })
+    else
+        A.set(name .. "_tap_action", { label = label, action = { [v] = true }, builtin = true })
+    end
+end
+
+-- { { value, label } } for every choice.
+function S.tapOptions(name)
+    local def = P[name]
+    local out = { { "own", "The card's own: " .. (def and def.does or "as it comes") } }
+    for _, b in ipairs(BUILTIN_TAPS) do out[#out + 1] = { b.id, b.label } end
+    for _, qa in ipairs(A.host.quickActions()) do
+        out[#out + 1] = { "qa:" .. qa.id, "Quick action: " .. qa.label }
+    end
+    return out
+end
+
 function S.tapChooser(ctx, name, back)
     local def = P[name]
     S.open(ctx, def.title .. ": when tapped", function(api)
-        local cur = A.tapAction(name)
-        local cur_id = cur and type(cur.action) == "table" and next(cur.action) or nil
-        local function done(entry)
-            A.set(name .. "_tap_action", entry)
-            api.close()
-            if back then back() end
-        end
+        local cur = S.tapValue(name)
         local rows = {}
-        rows[#rows + 1] = { { text = (cur == nil and CHECK or "") .. "The card's own: " .. (def.does or "as it comes"),
-            callback = function() done(nil) end } }
-        local row = {}
-        for _, b in ipairs(BUILTIN_TAPS) do
-            local on = cur ~= nil and cur_id == b.id and cur.builtin
-            row[#row + 1] = { text = (on and CHECK or "") .. b.label, callback = function()
-                done({ label = b.label, action = { [b.id] = true }, builtin = true })
-            end }
-        end
-        rows[#rows + 1] = row
-        local ok, Chooser = pcall(require, "lib/bookshelf_action_chooser")
-        if ok and type(Chooser) == "table" and Chooser.actionRows then
-            rows[#rows + 1] = S.header((cur and not cur.builtin) and (CHECK .. "Now: " .. tostring(cur.label or "an action"))
-                or "Or anything else:")
-            local function close(fn) return function() api.close(); fn() end end
-            local ok2, extra = pcall(Chooser.actionRows, close, function(fields)
-                fields.builtin = nil
-                A.set(name .. "_tap_action", fields)
+        for _, opt in ipairs(S.tapOptions(name)) do
+            rows[#rows + 1] = { { text = ((opt[1] == cur) and CHECK or "") .. shorten(opt[2], 44), callback = function()
+                S.setTapValue(name, opt[1], opt[2]:gsub("^Quick action: ", ""))
+                api.close()
                 if back then back() end
-            end)
-            if ok2 and type(extra) == "table" then
-                for _, r in ipairs(extra) do rows[#rows + 1] = r end
-            end
+            end } }
         end
-        rows[#rows + 1] = S.header("Buttons on the card (Continue, Details, +, \xE2\x88\x92) keep their own job.")
+        rows[#rows + 1] = S.header("Buttons on the card (Continue, Details, the tabs) keep their own job.")
         if back then
             rows[#rows + 1] = { { text = tr("Back"), callback = function() api.close(); back() end } }
         end
@@ -650,9 +984,8 @@ function S.card(name, ctx, env_fn, back)
                         callback = function()
                             if active then return end
                             api.close()
-                            -- saving the entry redraws the card; then show the new set
                             ctx.config:set("alm_slot", i)
-                            D.invalidate()
+                            reload(ctx)
                             show()
                         end,
                     }
@@ -682,5 +1015,7 @@ function S.card(name, ctx, env_fn, back)
     end
     show()
 end
+
+-- (menu builders follow: settings_menu)
 
 return S
