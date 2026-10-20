@@ -1,23 +1,21 @@
--- Reading Log for SimpleUI v1.5.6, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.6.3, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
--- (https://github.com/stevenzamora1/reading-log) — thank you!
+-- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Full license text: see LICENSE in this folder.
 --[[
 Reading Log for SimpleUI
 ------------------------
-Runs the Reading Log cards (github.com/stevenzamora1/reading-log, AGPL-3.0)
-as SimpleUI home screen modules, without Bookshelf.
+Runs the Reading Log cards (github.com/stevenzamora1/reading-log-simpleui,
+AGPL-3.0) as SimpleUI home screen modules, without Bookshelf.
 
-Reading Log is written as Bookshelf micro-modules: render(ctx) returns a
-canvas widget, taps arrive as ctx.tapped_region, settings go through
-Bookshelf's module store. This plugin stands in for Bookshelf:
-  * builds the ctx Reading Log expects from SimpleUI's build(w, ctx)
-  * wraps each canvas in a tap handler that resolves the canvas's own tap
-    regions and calls Reading Log's on_tap / keep_open
-  * gives Reading Log its own settings file instead of Bookshelf's store
-  * registers everything with SimpleUI's external module registry
-
-The Reading Log kit itself lives untouched in readinglog/almanac/.
+The card kit (readinglog/almanac/) draws the cards and owns their own
+options. This file is the layer around it:
+  * registers every card and the Dashboard with SimpleUI
+  * builds, taps and repaints them in place (one card, not the whole page)
+  * keeps every setting in settings/simpleui_readinglog.lua
+  * adds this plugin's own options: Night Mode Theme, Layout (Full Screen),
+    Bottom Space, Size, Height, Flash To Clear Ghosting, Reading Goals,
+    Today Page Card, Start On First Page, and the Year Goal With Covers card
 ]]
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -202,11 +200,6 @@ end
 
 -- ─── Reading Log kit (loaded on first use) ──────────────────────────────────
 
-local function bookshelfInstalled()
-    local lfs = require("libs/libkoreader-lfs")
-    local plugins = DIR:match("^(.*)/[^/]+$") or "."
-    return lfs.attributes(plugins .. "/bookshelf.koplugin", "mode") == "directory"
-end
 
 -- The card in the Today page's book club slot (Dashboard settings →
 -- "Today page card"). Year goal with covers unless you pick another.
@@ -224,20 +217,24 @@ local function todayCard()
     return "goal_covers"
 end
 
+-- defined further down, used by the kit hooks
+local flashMode, scheduleClock, quoteOfTheDay, rerollQuote
+
+-- Appearance → Live Clock (on by default).
+local function liveClock() return sget("live_clock", true) ~= false end
+
 local A, _kit_failed
 local function kit()
     if A then return A end
     if _kit_failed then return nil end
 
-    -- Year goal / daily goal live in Bookshelf's settings store. With no
-    -- Bookshelf around, give Reading Log one backed by our file. (Never
-    -- shadow the real one when Bookshelf is installed.)
-    if not bookshelfInstalled() and not package.loaded["lib/bookshelf_settings_store"] then
-        package.loaded["lib/bookshelf_settings_store"] = {
-            read = function(key, default) return sget("bs_" .. key, default) end,
-            save = function(key, value) sput("bs_" .. key, value) end,
-        }
-    end
+    -- The kit keeps its settings in our file, under "kit_" (as before).
+    package.loaded["simpleui_readinglog_store"] = {
+        readSetting = function(_, key) return sget("kit_" .. key) end,
+        saveSetting = function(_, key, value) sput("kit_" .. key, value) end,
+        delSetting = function(_, key) sput("kit_" .. key, nil) end,
+        flush = function() pcall(function() store():flush() end) end,
+    }
 
     local t0 = now_ms()
     local ok, res = pcall(dofile, KIT_PATH)
@@ -248,66 +245,79 @@ local function kit()
         return nil
     end
     A = res
-    diag("kit %s loaded in %d ms (Bookshelf installed: %s, goal store: %s)",
-        tostring(A.VERSION), now_ms() - t0, tostring(bookshelfInstalled()),
-        bookshelfInstalled() and "Bookshelf's" or "this plugin's")
+    package.loaded["simpleui_readinglog_kit"] = A -- for the diagnostics patch
+    diag("kit %s loaded in %d ms", tostring(A.VERSION), now_ms() - t0)
 
-    -- Own settings file instead of Bookshelf's module store.
-    A.get = function(key, default)
-        local v = sget("kit_" .. key)
-        if v == nil then return default end
-        return v
+    -- Quote of the day: your own quote file (SimpleUI's sui_quotes folder),
+    -- or your highlights; Quote Of The Day → Source.
+    local origQuote, origReroll = A.host.quoteOfTheDay, A.host.rerollQuote
+    A.host.quoteOfTheDay = function()
+        local q = quoteOfTheDay and quoteOfTheDay()
+        if q ~= nil then return q end
+        return origQuote()
     end
-    A.set = function(key, value)
-        sput("kit_" .. key, value)
-        A.epoch = (A.epoch or 0) + 1
-    end
-    -- Goals: SimpleUI's Reading Goals are the ones that count. The year goal
-    -- and the daily minutes target are read from (and written to) SimpleUI,
-    -- so setting them in either place changes both. Books read outside
-    -- KOReader stay Reading Log's own (SimpleUI has no such setting).
-    local function suiGoals()
-        local G = suiRequire("infra/sui_goals")
-        if G and type(G.get) == "function" and type(G.setUnits) == "function" then return G end
-        return nil
-    end
-    local D = A.D
-    local origYearGoal, origSetYear, origDaily = D.yearGoal, D.setYearGoal, D.dailyMinutesGoal
-    D.yearGoal = function()
-        local target, other = origYearGoal()
-        local G = suiGoals()
-        if G then
-            local ok, v = pcall(G.get, "annual")
-            if ok and tonumber(v) and tonumber(v) > 0 then target = floor(tonumber(v)) end
-        end
-        return target, other
-    end
-    D.setYearGoal = function(target)
-        local G = suiGoals()
-        if G and tonumber(target) and tonumber(target) > 0 then
-            pcall(G.setUnits, "annual", floor(tonumber(target)))
-            A.epoch = (A.epoch or 0) + 1
-            diag("year goal set to %s (saved to SimpleUI's Reading Goals)", tostring(target))
-            return
-        end
-        return origSetYear(target)
-    end
-    D.dailyMinutesGoal = function()
-        local G = suiGoals()
-        if G then
-            local ok, v = pcall(G.get, "daily")
-            if ok and tonumber(v) and tonumber(v) > 0 then return max(1, floor(tonumber(v) / 60)) end
-        end
-        return origDaily()
+    A.host.rerollQuote = function()
+        if rerollQuote and rerollQuote() then return end
+        return origReroll()
     end
 
-    -- Size (Appearance) reaches big text too, at half strength.
-    A.BIG_TEXT_SHARE = 0.5
+    local H, D = A.host, A.D
 
-    -- Bookshelf's grey module card → SimpleUI's white page.
-    A.pageColors = function()
-        return { 255, 255, 255 }, { 0, 0, 0 }, { 0x55, 0x55, 0x55 }
+    -- Size (Appearance) is the kit's Text size: one value per card, ours.
+    A.textSizePct = function(_pfx, id)
+        local v = tonumber(id and sget("cfg_" .. id .. "_scale_pct", 100)) or 100
+        return A.clamp(floor(v), 70, 150)
     end
+
+    -- Redraws the kit asks for (a tap changed a card, data or a cover
+    -- landed, the dashboard turned a tab) go through our in-place repaint.
+    local origRepaint = H.repaint
+    H.repaint = function(ctx, o)
+        local inst = type(ctx) == "table" and ctx._rl_inst
+        if not inst then return origRepaint(ctx, o) end
+        o = o or {}
+        if o.strip then
+            inst.request("clock", "ui", true, o.strip)
+        elseif o.flash then
+            inst.request("tap (whole card)", flashMode(), true)
+        else
+            inst.request("tap", "partial", true)
+        end
+    end
+    -- The banner / Today page clock: once a minute, just its strip.
+    local origTick = H.wantTick
+    H.wantTick = function(ctx, strip)
+        local inst = type(ctx) == "table" and ctx._rl_inst
+        if not inst then return origTick(ctx, strip) end
+        inst.clock = strip
+        if strip and liveClock() then scheduleClock() end
+    end
+
+    -- "Details": SimpleUI's book menu; a status changed there (finished,
+    -- on hold, reset) is read again straight away.
+    local origDetails = H.showDetails
+    H.showDetails = function(ctx, fp)
+        local okh, Hold = pcall(require, "features/library/sui_book_hold_dialog")
+        local orig_show = okh and type(Hold) == "table" and Hold.show
+        if orig_show then
+            Hold.show = function(file, opts, ...)
+                Hold.show = orig_show
+                if type(opts) == "table" and type(opts.refresh_fn) == "function" then
+                    local rf = opts.refresh_fn
+                    opts.refresh_fn = function(...)
+                        A.epoch = (A.epoch or 0) + 1
+                        pcall(D.invalidate)
+                        return rf(...)
+                    end
+                end
+                return orig_show(file, opts, ...)
+            end
+        end
+        local ok, err = pcall(origDetails, ctx, fp)
+        if orig_show then Hold.show = orig_show end
+        diag("details %s -> SimpleUI book menu%s", tostring(fp), ok and "" or (" FAILED: " .. tostring(err)))
+    end
+
     -- Today page: "Year Goal With Covers" in place of Book club (which
     -- needs a book club collection). Only the built-in page changes; a page
     -- you've edited in Pages and cards keeps what you chose.
@@ -335,66 +345,18 @@ local function kit()
         end
     end
 
-    -- Tab order: Today, Monthly, Yearly. Pages are stored by id, not by
-    -- position, so reordering keeps everyone's edited pages intact.
-    local ORDER = { today = 1, monthly = 2, yearly = 3 }
+    -- Tab order: Today, Monthly, Yearly, Trends, Library. Pages are stored by
+    -- id, not by position, so reordering keeps everyone's edited pages intact.
+    local ORDER = { today = 1, monthly = 2, yearly = 3, trends = 4, library = 5 }
     table.sort(A.DASH_PAGES, function(a, b)
         return (ORDER[a.id] or 99) < (ORDER[b.id] or 99)
     end)
-
-    -- "Details" on a book: SimpleUI's own long-press book menu (mark
-    -- finished / on hold, collections, book info, ...) instead of
-    -- Bookshelf's detail page, which needs Bookshelf's shelf window.
-    local D = A.D
-    local origDetails = D.showDetails
-    D.showDetails = function(ctx, fp)
-        local mod_id = ctx and ctx.entry and ctx.entry.id
-        local sw = mod_id and (screenShowing(mod_id) or (INSTANCES[mod_id] and INSTANCES[mod_id].lastwin))
-        if sw and type(sw._showBookHoldDialog) == "function" and fp then
-            local okh, Hold = pcall(require, "features/library/sui_book_hold_dialog")
-            -- Wrap this one call's refresh so Reading Log re-reads its data
-            -- after a status change (finished, on hold, reset...).
-            local orig_show = okh and type(Hold) == "table" and Hold.show
-            if orig_show then
-                Hold.show = function(file, opts, ...)
-                    Hold.show = orig_show
-                    if type(opts) == "table" and type(opts.refresh_fn) == "function" then
-                        local rf = opts.refresh_fn
-                        opts.refresh_fn = function(...)
-                            A.epoch = (A.epoch or 0) + 1
-                            pcall(D.invalidate)
-                            return rf(...)
-                        end
-                    end
-                    return orig_show(file, opts, ...)
-                end
-            end
-            local ok, err = pcall(sw._showBookHoldDialog, sw, fp, mod_id)
-            if orig_show then Hold.show = orig_show end
-            diag("details %s -> SimpleUI book menu%s", tostring(fp), ok and "" or (" FAILED: " .. tostring(err)))
-            if ok then return end
-        end
-        -- older SimpleUI: call its book menu directly
-        local okh, Hold = pcall(require, "features/library/sui_book_hold_dialog")
-        if okh and type(Hold) == "table" and type(Hold.show) == "function" and fp then
-            local ok = pcall(Hold.show, fp, {
-                refresh_fn = function()
-                    A.epoch = (A.epoch or 0) + 1
-                    pcall(D.invalidate)
-                    refreshScreen("book status changed")
-                end,
-            })
-            diag("details %s -> SimpleUI book menu (direct)%s", tostring(fp), ok and "" or " FAILED")
-            if ok then return end
-        end
-        diag("details %s -> no SimpleUI book menu found, opening the book", tostring(fp))
-        return origDetails(ctx, fp)
-    end
 
     -- Reading Log paints every theme pre-inverted so it looks the same day
     -- and night. Follow night mode instead: swap to a night theme (Dark by
     -- default) while night mode is on.
     local dayThemeId = A.themeId
+    A.dayThemeId = dayThemeId
     A.themeId = function()
         if Screen.night_mode then
             local t = sget("night_theme", "dark")
@@ -407,8 +369,11 @@ end
 
 -- ─── module instances ───────────────────────────────────────────────────────
 
--- Card names (Reading Log's panel ids) and their titles.
+-- Card names (the kit's panel ids) and their titles, in the order SimpleUI
+-- lists them.
 local CARDS = {
+    { "mini",          "Mini Dashboard" },
+    -- Today
     { "banner",        "Banner" },
     { "continue",      "Continue Reading" },
     { "activity",      "Activity Rings" },
@@ -417,11 +382,16 @@ local CARDS = {
     { "goal",          "Year Goal" },
     { "goal_covers",   "Year Goal With Covers" },
     { "bookclub",      "Book Club" },
+    { "timeline",      "Today's Timeline" },
+    { "control",       "Control Centre" },
+    -- Monthly
     { "month_rings",   "Month Rings" },
     { "month_totals",  "Month Totals" },
     { "month_chart",   "Pages Per Day" },
     { "when_read",     "When You Read" },
     { "longest_month", "Longest Reads (Month)" },
+    { "challenge",     "Monthly Challenge" },
+    -- Yearly
     { "year_time",     "Time Read By Month" },
     { "longest_year",  "Longest Reads (Year)" },
     { "year_chart",    "Books And Pages" },
@@ -429,6 +399,16 @@ local CARDS = {
     { "genres",        "Top Genres" },
     { "heatmap",       "Reading Heatmap" },
     { "finished",      "Recently Finished" },
+    -- Trends
+    { "trends",        "Reading Trends" },
+    { "compare",       "This Week Vs Last" },
+    { "forecast",      "Finish Forecast" },
+    -- Library
+    { "library",       "Library Stats" },
+    { "authors",       "Most-Read Authors" },
+    { "pick",          "Random Pick" },
+    { "quote",         "Quote Of The Day" },
+    -- Shelves
     { "tbr",           "TBR Shelf" },
     { "deadline",      "Finish By" },
 }
@@ -458,18 +438,205 @@ local STRENGTH = { ui = 1, partial = 2, flashui = 3, full = 4 }
 -- Home screen goes back to page 1 after a book or sleep (see further down).
 local function firstPageOn() return sget("reset_page", true) ~= false end
 
-local function flashMode() return sget("flash_clean", true) and "flashui" or "ui" end
+flashMode = function() return sget("flash_clean", true) and "flashui" or "ui" end
 
 local renderInto -- defined after bookshelfCtx
-local watchWindow, windowOf, prewarm -- defined after MODULES
+local watchWindow, windowOf, prewarm, cancelPrewarm -- defined after MODULES
+
+-- ─── Quote of the day from your own quote file ──────────────────────────────
+-- SimpleUI's Quote of the Day reads quote files from settings/simpleui/
+-- sui_quotes/ (Lua files returning { { q = "...", a = "Author", b = "Book" } }).
+-- The Reading Log quote card reads the same file: the one picked here, else
+-- the one SimpleUI's own module uses, else Quotes.lua, else the first there.
+-- Source "highlights" keeps the kit's highlight-a-day instead.
+
+local function quotesDir() return DataStorage:getSettingsDir() .. "/simpleui/sui_quotes" end
+
+local function quoteFiles()
+    local lfs = require("libs/libkoreader-lfs")
+    local out = {}
+    if lfs.attributes(quotesDir(), "mode") ~= "directory" then return out end
+    for name in lfs.dir(quotesDir()) do
+        if name:match("%.lua$") then out[#out + 1] = name end
+    end
+    table.sort(out)
+    return out
+end
+
+local function quoteFileName()
+    local files = quoteFiles()
+    if #files == 0 then return nil end
+    local have = {}
+    for _i, f in ipairs(files) do have[f] = true end
+    local mine = sget("quote_file")
+    if mine and have[mine] then return mine end
+    local S = suiRequire("infra/sui_store")
+    local theirs = S and S.readSetting and S:readSetting("simpleui_hs_quote_custom_file")
+    if type(theirs) == "string" and have[theirs] then return theirs end
+    if have["Quotes.lua"] then return "Quotes.lua" end
+    return files[1]
+end
+
+local function quoteSource()
+    local v = sget("quote_source", "file")
+    if v == "file" and not quoteFileName() then return "highlights" end
+    return v
+end
+
+local _qcache = { path = nil, mtime = nil, list = nil }
+local function loadQuoteFile(name)
+    local lfs = require("libs/libkoreader-lfs")
+    local path = quotesDir() .. "/" .. name
+    local mtime = lfs.attributes(path, "modification")
+    if not mtime then return nil end
+    if _qcache.path == path and _qcache.mtime == mtime then return _qcache.list end
+    local ok, data = pcall(dofile, path)
+    local list = {}
+    if ok and type(data) == "table" then
+        for _i, e in ipairs(data) do
+            local q = type(e) == "table" and (e.q or e.text or e[1])
+            if type(q) == "string" and q ~= "" then
+                list[#list + 1] = { q = q, a = type(e.a) == "string" and e.a or nil, b = type(e.b) == "string" and e.b or nil }
+            end
+        end
+    else
+        diag("QUOTE FILE FAILED %s: %s", path, tostring(data))
+    end
+    _qcache.path, _qcache.mtime, _qcache.list = path, mtime, list
+    return list
+end
+
+local function dayHash(str)
+    local h = 5381
+    for i = 1, #str do h = (h * 33 + str:byte(i)) % 2147483647 end
+    return h
+end
+
+-- nil = not ours (use highlights); false = nothing to show; else a quote.
+quoteOfTheDay = function()
+    if quoteSource() ~= "file" then return nil end
+    local name = quoteFileName()
+    local list = name and loadQuoteFile(name)
+    if not list or #list == 0 then return nil end
+    local today = os.date("%Y-%m-%d")
+    local roll = sget("quote_file_roll")
+    if type(roll) ~= "table" or roll.day ~= today or roll.file ~= name then
+        roll = { day = today, file = name, n = 0 }
+    end
+    local idx = tonumber(roll.idx)
+    if not idx or idx > #list then
+        idx = dayHash(today .. "#" .. tostring(roll.n or 0)) % #list + 1
+        if roll.prev and #list > 1 and idx == roll.prev then idx = idx % #list + 1 end
+        roll.idx = idx
+        sput("quote_file_roll", roll)
+    end
+    local e = list[idx]
+    -- the card shows "— title, author": a quote with no book shows the author
+    if e.b then
+        return { text = e.q, title = e.b, author = e.a }
+    end
+    return { text = e.q, title = e.a or "" }
+end
+
+rerollQuote = function()
+    if quoteSource() ~= "file" then return false end
+    local today = os.date("%Y-%m-%d")
+    local roll = sget("quote_file_roll")
+    if type(roll) ~= "table" or roll.day ~= today then roll = { day = today, n = 0 } end
+    sput("quote_file_roll", { day = today, file = roll.file, n = (tonumber(roll.n) or 0) + 1, prev = tonumber(roll.idx) })
+    return true
+end
+
+local function quoteChanged()
+    if A then
+        pcall(function() A.D.nextQuote() end)
+        A.epoch = (A.epoch or 0) + 1
+    end
+end
+
+-- Menu: Quote Of The Day → Source, File.
+local function quoteMenu(done)
+    return {
+        text = _("Quote Of The Day"),
+        sub_item_table_func = function()
+            local items = {
+                {
+                    text = _("Source: My Quote File"), radio = true,
+                    enabled_func = function() return quoteFileName() ~= nil end,
+                    checked_func = function() return quoteSource() == "file" end,
+                    keep_menu_open = true,
+                    callback = function() sput("quote_source", "file"); quoteChanged(); done() end,
+                },
+                {
+                    text = _("Source: My Highlights"), radio = true,
+                    checked_func = function() return quoteSource() == "highlights" end,
+                    keep_menu_open = true,
+                    callback = function() sput("quote_source", "highlights"); quoteChanged(); done() end,
+                    separator = true,
+                },
+            }
+            local files = quoteFiles()
+            if #files == 0 then
+                items[#items + 1] = { text = _("No quote files in settings/simpleui/sui_quotes"), enabled = false }
+            end
+            for _i, f in ipairs(files) do
+                items[#items + 1] = {
+                    text = f, radio = true,
+                    checked_func = function() return quoteFileName() == f end,
+                    keep_menu_open = true,
+                    callback = function()
+                        sput("quote_file", f)
+                        sput("quote_source", "file")
+                        quoteChanged()
+                        done()
+                    end,
+                }
+            end
+            return items
+        end,
+    }
+end
+
+-- ─── the minute tick (Banner / Today page clock) ────────────────────────────
+-- Cards with a clock redraw just their clock strip at the start of each
+-- minute, while they're on screen, the device is awake and no book is open.
+
+local _clock_timer
+local function cancelClock()
+    if _clock_timer then
+        UIManager:unschedule(_clock_timer)
+        _clock_timer = nil
+    end
+end
+local function clockTick()
+    _clock_timer = nil
+    if Device.screen_saver_mode or not liveClock() then return end
+    local RUI = package.loaded["apps/reader/readerui"]
+    if RUI and RUI.instance then return end
+    local any = false
+    for _id, inst in pairs(INSTANCES) do
+        if inst.clock and screenShowing(inst.id) then
+            any = true
+            inst.request("clock", "ui", true, inst.clock)
+        end
+    end
+    if any then scheduleClock() end
+end
+scheduleClock = function()
+    if _clock_timer or not liveClock() then return end
+    _clock_timer = clockTick
+    UIManager:scheduleIn(60 - (os.time() % 60) + 1, clockTick)
+end
 
 local function newInstance(id, card, dashboard)
     local inst = { id = id, card = card, dashboard = dashboard, regions = nil }
     INSTANCES[id] = inst
     -- request(reason, mode, now): repaint soon. Data landing is batched
     -- (several loads finishing close together = one repaint); taps go now.
-    inst.request = function(reason, mode, now)
+    inst.request = function(reason, mode, now, strip)
         mode = STRENGTH[mode] and mode or "ui"
+        -- a clock-only redraw keeps its strip unless something bigger joins it
+        if strip and (inst.pending == nil or inst.strip) then inst.strip = strip else inst.strip = nil end
         if not inst.pending or STRENGTH[mode] > STRENGTH[inst.pending] then inst.pending = mode end
         inst.reason = reason
         if inst.timer then
@@ -478,9 +645,9 @@ local function newInstance(id, card, dashboard)
         end
         inst.timer = function()
             inst.timer = nil
-            local m, r = inst.pending, inst.reason
-            inst.pending, inst.reason = nil, nil
-            renderInto(inst, m, r)
+            local m, r, st = inst.pending, inst.reason, inst.strip
+            inst.pending, inst.reason, inst.strip = nil, nil, nil
+            renderInto(inst, m, r, st)
         end
         if now then UIManager:nextTick(inst.timer) else UIManager:scheduleIn(0.3, inst.timer) end
     end
@@ -498,19 +665,20 @@ local function newInstance(id, card, dashboard)
     return inst
 end
 
--- The ctx a Bookshelf micro-module expects.
+-- The ctx the card kit draws and taps with. `sui` is SimpleUI's own screen
+-- ctx from the last build (opening books, the book menu, Quick Actions).
 local function bookshelfCtx(inst, w, h)
+    local sctx = inst.sctx
     return {
-        width = w, height = h, max_height = h,
-        surface = inst.dashboard and "fullscreen" or nil,
+        width = w, height = h,
         entry = { id = inst.id },
+        mod_id = inst.id,
+        pfx = type(sctx) == "table" and sctx.pfx or "simpleui_hs_",
+        sui = sctx,
         config = inst.config,
-        -- Reading Log's own size knob (Bookshelf's module text size): it
-        -- scales text, rings and charts together. 70-150 %.
-        scale = tonumber(sget("cfg_" .. inst.id .. "_scale_pct", 100)) or 100,
         refresh = inst.refresh,
         set_tap_regions = function(regions) inst.regions = regions end,
-        menu = { _reload = function() refreshScreen("settings changed: " .. inst.id) end },
+        _rl_inst = inst,
     }
 end
 
@@ -518,16 +686,20 @@ local function renderCanvas(inst, bctx)
     local Ak = kit()
     if not Ak then return nil, "kit not loaded" end
     local ok, canvas
+    -- covers still being extracted are noted against this card
+    Ak.D.cover_pending[inst.id] = nil
+    Ak.D.cover_owner = inst.id
     if inst.dashboard then
         ok, canvas = pcall(Ak.Dashboard.render, bctx)
     else
         ok, canvas = pcall(Ak.render, inst.card, bctx)
     end
+    Ak.D.cover_owner = nil
     if not ok or type(canvas) ~= "table" then return nil, canvas end
     return canvas
 end
 
-renderInto = function(inst, mode, reason)
+renderInto = function(inst, mode, reason, strip)
     local sw = screenShowing(inst.id)
     -- A tap can only land on a card that is showing: if the window record is
     -- stale (SimpleUI swapped windows), take the current home window.
@@ -562,6 +734,9 @@ renderInto = function(inst, mode, reason)
     if old and old ~= canvas and type(old.free) == "function" then pcall(old.free, old) end
     local r = inst.rect
     local region = Geom:new{ x = r.x, y = r.y, w = r.w, h = r.h }
+    if strip and tonumber(strip.y) and tonumber(strip.h) then
+        region = Geom:new{ x = r.x, y = r.y + floor(strip.y), w = r.w, h = max(1, floor(strip.h)) }
+    end
     UIManager:setDirty(sw, function() return mode, region, true end)
     diag("repaint %s in place (%s, %s) built in %d ms | %d tap regions",
         inst.id, tostring(reason), mode, now_ms() - t0, #(inst.regions or {}))
@@ -609,25 +784,19 @@ local function wrapCanvas(inst, canvas, slot_w, slot_h, full_x, full_y)
         local region = pickRegion(inst.regions, rx, ry)
         local ctx = bookshelfCtx(inst, w, h)
         ctx.tapped_region = region
-        local keep
         diag("tap %s at %d,%d of %dx%d -> region %s (%d regions)", inst.id, rx, ry, w, h,
             tostring(region), #(inst.regions or {}))
+        if inst.dashboard and region == nil then return false end
+        -- the kit asks for the redraw it needs (H.repaint -> inst.request)
+        local ok, err
         if inst.dashboard then
-            if region == nil then return false end
-            local ok, k = pcall(Ak.Dashboard.keep_open, ctx)
-            keep = ok and k
-            local ok2, err = pcall(Ak.Dashboard.on_tap, ctx)
-            if not ok2 then logger.warn(TAG, "dashboard tap failed:", err) end
+            ok, err = pcall(Ak.Dashboard.on_tap, ctx)
         else
-            local ok, k = pcall(Ak.keepOpen, inst.card, ctx)
-            keep = ok and k
-            local ok2, err = pcall(Ak.onTap, inst.card, ctx)
-            if not ok2 then logger.warn(TAG, inst.card, "tap failed:", err) end
+            ok, err = pcall(Ak.onTap, inst.card, ctx)
         end
-        if keep then
-            -- a new tab or month replaces the whole card: flash it clean
-            local whole = type(region) == "string" and (region:find("^tab:") or region:find("^heading|"))
-            inst.request("tap " .. tostring(region), whole and flashMode() or "partial", true)
+        if not ok then
+            logger.warn(TAG, inst.id, "tap failed:", err)
+            diag("TAP FAILED %s (%s): %s", inst.id, tostring(region), tostring(err))
         end
         _last_tap = os.time()
         return true
@@ -666,6 +835,7 @@ local function makeModule(inst, title)
     function M.build(w, ctx)
         local Ak = kit()
         if not Ak then return nil end
+        inst.sctx = ctx
         local h = M.getHeight(ctx)
         local slot_w, slot_h = w, h
         local fx, fy
@@ -685,7 +855,7 @@ local function makeModule(inst, title)
         inst.regions = inst.regions or canvas.regions
         local avail = contentHeight()
         diag("built %s %dx%d (asked %dx%d) in %d ms | size %s%% | theme %s, night %s | %d tap regions%s",
-            inst.id, canvas.w or -1, canvas.h or -1, w, h, now_ms() - t0, tostring(bctx.scale),
+            inst.id, canvas.w or -1, canvas.h or -1, w, h, now_ms() - t0, tostring(Ak.textSizePct(nil, inst.id)),
             tostring(Ak.themeId()), Screen.night_mode and "ON" or "off", #(inst.regions or {}),
             (canvas.h or 0) > avail and string.format("  <-- TALLER THAN THE PAGE (%d px available)", avail) or "")
         if (canvas.w and canvas.w ~= w) or (canvas.h and canvas.h ~= h) then
@@ -697,6 +867,24 @@ local function makeModule(inst, title)
         end
         if inst.dashboard and prewarm then prewarm(inst) end
         return wrapCanvas(inst, canvas, slot_w, slot_h, fx, fy)
+    end
+
+    -- Covers that were still being extracted when the card was drawn: once
+    -- one lands, redraw the card. SimpleUI calls this from its cover poll;
+    -- true = nothing left to wait for.
+    function M.updateCovers()
+        local Ak = A
+        local set = Ak and Ak.D.cover_pending[inst.id]
+        if not set or next(set) == nil then return true end
+        local arrived, waiting = false, false
+        for fp in pairs(set) do
+            local st = Ak.host.coverSettled(fp)
+            if st == "arrived" then arrived = true; set[fp] = nil
+            elseif st == "none" then set[fp] = nil
+            else waiting = true end
+        end
+        if arrived then inst.request("cover arrived", "ui") end
+        return not waiting
     end
 
     function M.getMenuItems(ctx_menu)
@@ -771,6 +959,16 @@ local function makeModule(inst, title)
                 checked_func = function() return sget("flash_clean", true) and true or false end,
                 keep_menu_open = true,
                 callback = function() sput("flash_clean", not sget("flash_clean", true)) end,
+            },
+            {
+                text = _("Live Clock"),
+                help_text = _("Update the clock on the Banner and the Today tab every minute while it's on screen. Off: it updates whenever the page redraws."),
+                checked_func = liveClock,
+                keep_menu_open = true,
+                callback = function()
+                    sput("live_clock", not liveClock())
+                    if liveClock() then scheduleClock() else cancelClock() end
+                end,
             },
         }
 
@@ -864,7 +1062,6 @@ local function makeModule(inst, title)
                 end,
             }
         end
-        local function G() return suiRequire("infra/sui_goals") end
         local goals = {
             numItem(_("Books This Year"),
                 function() local Ak = kit(); return Ak and (Ak.D.yearGoal()) end,
@@ -875,15 +1072,8 @@ local function makeModule(inst, title)
                 function(v) local Ak = kit(); if Ak then Ak.D.setOtherBooks(v) end end,
                 0, 365, 1, nil, _("Paper books, audiobooks or another reader. Added to this year's count.")),
             numItem(_("Minutes A Day"),
-                function() local Ak = kit(); return Ak and Ak.D.dailyMinutesGoal() end,
-                function(v)
-                    local g = G()
-                    if g and type(g.setUnits) == "function" then pcall(g.setUnits, "daily", v)
-                    else
-                        local ok, Store = pcall(require, "lib/bookshelf_settings_store")
-                        if ok and type(Store) == "table" and Store.save then pcall(Store.save, "micromodule_reading_goal_daily", v) end
-                    end
-                end,
+                function() local Ak = kit(); return Ak and (Ak.D.dailyMinutesGoal() or 30) end,
+                function(v) local Ak = kit(); if Ak then Ak.D.setDailyMinutesGoal(v) end end,
                 5, 720, 5, " min", _("Same as SimpleUI's Daily Goal. Fills the minutes ring.")),
             numItem(_("Pages A Day"),
                 function() local Ak = kit(); return Ak and Ak.get("activity_page_goal", 30) end,
@@ -894,21 +1084,36 @@ local function makeModule(inst, title)
         local items = {
             { text = _("Reading Goals"), sub_item_table = goals },
             {
-                text = _("Reading Log Settings…"),
-                callback = function()
+                -- the kit's own options: the card's content, colour, Look and
+                -- colours, When tapped; for the Dashboard, Pages and cards
+                text = _("Reading Log Settings"),
+                sub_item_table_func = function()
                     local Ak = kit()
-                    if not Ak then return end
-                    local w = innerWidth()
-                    local bctx = bookshelfCtx(inst, w, M.getHeight({ col_w = w }))
+                    if not Ak then return {} end
+                    local mctx = {
+                        menu = ctx_menu, pfx = ctx_menu and ctx_menu.pfx or "simpleui_hs_",
+                        mod_id = inst.id, entry = { id = inst.id }, config = inst.config,
+                        menu_refresh = function()
+                            Ak.D.invalidate()
+                            Ak.epoch = (Ak.epoch or 0) + 1
+                            refreshScreen("settings changed: " .. inst.id)
+                        end,
+                    }
+                    local ok, list
                     if inst.dashboard then
-                        pcall(Ak.Dashboard.show_settings, bctx)
+                        ok, list = pcall(Ak.S.dashboardMenu, mctx, nil, { no_size = true })
                     else
-                        pcall(Ak.showSettings, inst.card, bctx)
+                        ok, list = pcall(Ak.S.cardMenu, inst.card, mctx, nil, { no_size = true })
                     end
+                    if not ok then diag("SETTINGS MENU FAILED %s: %s", inst.id, tostring(list)) end
+                    return (ok and type(list) == "table") and list or {}
                 end,
             },
             { text = _("Appearance"), sub_item_table = appearance },
         }
+        if inst.dashboard or inst.card == "quote" then
+            items[#items + 1] = quoteMenu(done)
+        end
         if inst.dashboard then
             local today_items = {}
             for _i, c in ipairs(TODAY_CHOICES) do
@@ -1016,6 +1221,11 @@ watchWindow = function(inst)
                 i.on = nil
             end
         end
+        -- off the dashboard page: no point pre-loading its hidden tabs now
+        if not vis and self._rl_vis then
+            cancelPrewarm()
+            cancelClock()
+        end
         if self._rl_vis ~= nil and vis ~= self._rl_vis and sget("flash_clean", true) then
             UIManager:setDirty(nil, "full")
             diag("page turned %s the Reading Log page -> full refresh", vis and "onto" or "off")
@@ -1033,40 +1243,64 @@ end
 -- switch to them is a single redraw with everything already there.
 
 local _prewarm_state = nil -- nil = not started, "waiting", "done"
+local _prewarm_timer = nil
+-- Sleep stops it; it starts over the next time the dashboard is drawn.
+cancelPrewarm = function()
+    if _prewarm_timer then
+        UIManager:unschedule(_prewarm_timer)
+        _prewarm_timer = nil
+        if _prewarm_state == "waiting" then _prewarm_state = nil end
+    end
+end
 prewarm = function(inst)
     if _prewarm_state ~= nil or sget("prewarm", true) == false then return end
     _prewarm_state = "waiting"
     local tries = 0
-    local function run()
+    local queue, t_total, n = nil, 0, 0
+    local function step()
+        _prewarm_timer = nil
         local Ak = kit()
         if not Ak or not inst.w then _prewarm_state = "done"; return end
         -- don't compete with someone tapping around
-        if os.time() - _last_tap < 2 and tries < 5 then
+        if os.time() - _last_tap < 2 and tries < 10 then
             tries = tries + 1
-            UIManager:scheduleIn(3, run)
+            _prewarm_timer = step
+            UIManager:scheduleIn(3, step)
             return
         end
-        _prewarm_state = "done"
-        local tabs, cur = Ak.state.dash_tabs, Ak.state.dash_page
-        if type(tabs) ~= "table" then return end
-        local saved_tabs = tabs
-        local t0, n = now_ms(), 0
-        for _i, tab in ipairs(saved_tabs) do
-            if tab.kind == "page" and tab.page ~= cur then
-                Ak.state.dash_page = tab.page
-                local ctx = bookshelfCtx(inst, inst.w, inst.h)
-                ctx.entry = { id = inst.id .. "_prewarm" }
-                ctx.refresh = function() end
-                ctx.set_tap_regions = function() end
-                local ok, c = pcall(Ak.Dashboard.render, ctx)
-                if ok and type(c) == "table" and c.free then pcall(c.free, c) end
-                n = n + 1
+        if not queue then
+            queue = {}
+            for _i, tab in ipairs(Ak.state.dash_tabs or {}) do
+                if tab.kind == "page" then queue[#queue + 1] = tab.page end
             end
         end
-        Ak.state.dash_page, Ak.state.dash_tabs = cur, saved_tabs
-        diag("prewarmed %d hidden dashboard tabs in %d ms", n, now_ms() - t0)
+        -- one hidden tab per step, so no single stall is long
+        local cur, tabs = Ak.state.dash_page, Ak.state.dash_tabs
+        local page
+        repeat page = table.remove(queue, 1) until page == nil or page ~= cur
+        if not page then
+            _prewarm_timer = nil
+            _prewarm_state = "done"
+            diag("prewarmed %d hidden dashboard tabs (%d ms in total)", n, t_total)
+            return
+        end
+        local t0 = now_ms()
+        Ak.state.dash_page = page
+        local ctx = bookshelfCtx(inst, inst.w, inst.h)
+        ctx._rl_inst = nil -- not the card on screen: no repaints, no clock
+        ctx.entry = { id = inst.id .. "_prewarm" }
+        ctx.refresh = function() end
+        ctx.set_tap_regions = function() end
+        local ok, c = pcall(Ak.Dashboard.render, ctx)
+        if ok and type(c) == "table" and c.free then pcall(c.free, c) end
+        Ak.state.dash_page, Ak.state.dash_tabs = cur, tabs
+        n = n + 1
+        t_total = t_total + (now_ms() - t0)
+        _prewarm_timer = step
+        UIManager:scheduleIn(1, step)
     end
-    UIManager:scheduleIn(4, run)
+    _prewarm_timer = step
+    UIManager:scheduleIn(4, step)
 end
 
 -- ─── registration ───────────────────────────────────────────────────────────
@@ -1146,8 +1380,32 @@ local function resetHomePage(why)
     end
 end
 
-function Plugin:onSuspend() resetHomePage("sleep") end
-function Plugin:onReaderReady() resetHomePage("book opened") end
+function Plugin:onSuspend()
+    cancelClock()
+    cancelPrewarm()
+    resetHomePage("sleep")
+end
+
+-- After waking, the home screen redraws and the clock starts again from the
+-- next minute (only if a card with a clock is on screen).
+function Plugin:onResume()
+    UIManager:scheduleIn(2, function()
+        if not liveClock() then return end
+        for _id, inst in pairs(INSTANCES) do
+            if inst.clock and screenShowing(inst.id) then
+                inst.request("clock", "ui", true, inst.clock)
+                scheduleClock()
+                diag("clock restarted after wake")
+                return
+            end
+        end
+    end)
+end
+function Plugin:onReaderReady()
+    cancelPrewarm()
+    cancelClock()
+    resetHomePage("book opened")
+end
 
 -- Cards bake their colours in when built, so rebuild them when night mode
 -- flips. (Delay: the flip itself is handled elsewhere, maybe after us.)
