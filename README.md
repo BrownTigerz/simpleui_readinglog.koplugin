@@ -21,9 +21,11 @@ Copying over the old folder can leave the old version running. Your settings are
 
 ## Screenshots
 
-![Today](images/readinglog-today.png)
-![Monthly](images/readinglog-monthly.png)
-![Yearly](images/readinglog-yearly.png)
+![Today](images/reading-log-today.png)
+![Monthly](images/reading-log-monthly.png)
+![Yearly](images/reading-log-yearly.png)
+![Trends](images/reading-log-trends.png)
+![Library](images/reading-log-library.png)
 ![Settings](images/readinglog-settings.png)
 
 ## Put the dashboard on page 2
