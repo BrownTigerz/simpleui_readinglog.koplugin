@@ -3101,11 +3101,14 @@ local SAMPLE_TRENDS = {
 -- accent and stepping round the palette.
 local function trendColours(tone)
     local id1 = A.accentIds()
+    -- the colours only: Black is no trend line colour
+    local order = {}
+    for _, id in ipairs(A.ACCENT_ORDER) do if id ~= "black" then order[#order + 1] = id end end
     local start = 1
-    for i, id in ipairs(A.ACCENT_ORDER) do if id == id1 then start = i end end
+    for i, id in ipairs(order) do if id == id1 then start = i end end
     local out = {}
     for k = 0, 5 do
-        local fam = A.ACCENTS[A.ACCENT_ORDER[(start - 1 + k * 2) % #A.ACCENT_ORDER + 1]]
+        local fam = A.ACCENTS[order[(start - 1 + k * 2) % #order + 1]]
         out[k + 1] = tone.dark and fam.bright or fam.deep
     end
     return out
