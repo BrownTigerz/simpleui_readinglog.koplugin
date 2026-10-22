@@ -525,6 +525,20 @@ function S.cardMenu(name, mctx, ctx_menu, o)
     return assemble(ctx_menu, spec)
 end
 
+--- Just a card's own content options (no colour, look or tap), as a
+--- menu list. Reading Log for SimpleUI puts Book club's under Reading Goals.
+function S.cardContentMenu(name, mctx)
+    if not P[name] then return {} end
+    local function env_fn() return A.makeEnv(name, mctx, 0, 0, { nested = true, slot = 1 }) end
+    local function after() S.reload(mctx) end
+    return S.rowsMenu(function()
+        local fn = S.ROWS[name]
+        if not fn then return {} end
+        local ok, rows = pcall(fn, env_fn(), menuApi(after), mctx)
+        return ok and rows or {}
+    end, after)
+end
+
 --- The Dashboard's settings.
 function S.dashboardMenu(mctx, ctx_menu, o)
     o = o or {}
@@ -546,7 +560,17 @@ function S.dashboardMenu(mctx, ctx_menu, o)
                 local items, seen = {}, {}
                 for _, page in ipairs(A.dashPages()) do
                     for _, r in ipairs(A.dashPageRows(page)) do
-                        for _, name in ipairs(r.cards) do
+                        -- a swipe spot (Reading Log for SimpleUI): its cards
+                        local names = {}
+                        for _, n in ipairs(r.cards) do
+                            local m = P[n] and P[n].members
+                            if m then
+                                for _, x in ipairs(m()) do names[#names + 1] = x end
+                            else
+                                names[#names + 1] = n
+                            end
+                        end
+                        for _, name in ipairs(names) do
                             if not seen[name] and P[name] then
                                 seen[name] = true
                                 items[#items + 1] = {
