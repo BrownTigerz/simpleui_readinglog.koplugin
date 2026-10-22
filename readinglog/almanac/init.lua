@@ -1,3 +1,4 @@
+-- Modified by TK for Reading Log for SimpleUI, 2026 (from stevenzamora1/reading-log-simpleui).
 --[[
 Reading Log for Simple UI: shared code behind every Reading Log module.
 
@@ -118,8 +119,11 @@ A.ACCENTS = {
     magenta = { label = "Magenta", deep = { 187, 34, 153 }, bright = { 255, 119, 221 }, pair = "teal" },
     pink    = { label = "Pink",    deep = { 204, 51, 119 }, bright = { 255, 136, 187 }, pair = "sky" },
     brown   = { label = "Brown",   deep = { 136, 85, 34 },  bright = { 221, 170, 119 }, pair = "teal" },
+    -- Black (added by Reading Log for SimpleUI): black on light cards; on
+    -- dark cards black wouldn't show, so it turns white there.
+    black   = { label = "Black",   deep = { 0, 0, 0 },      bright = { 255, 255, 255 }, pair = "red" },
 }
-A.ACCENT_ORDER = { "red", "orange", "gold", "lime", "green", "teal", "sky", "blue", "purple", "magenta", "pink", "brown" }
+A.ACCENT_ORDER = { "red", "orange", "gold", "lime", "green", "teal", "sky", "blue", "purple", "magenta", "pink", "brown", "black" }
 
 local WHITE, BLACK = { 255, 255, 255 }, { 0, 0, 0 }
 
