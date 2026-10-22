@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.6.3, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.7.0, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Full license text: see LICENSE in this folder.
@@ -203,27 +203,323 @@ end
 
 -- The card in the Today page's book club slot (Dashboard settings →
 -- "Today page card"). Year goal with covers unless you pick another.
-local TODAY_CHOICES = {
+local TODAY_PICKS = {
     { "goal_covers", "Year Goal With Covers" },
     { "goal",        "Year Goal" },
     { "bookclub",    "Book Club" },
     { "finished",    "Recently Finished" },
     { "tbr",         "TBR Shelf" },
 }
+local TODAY_CHOICES = TODAY_PICKS
+
 local TODAY_SLOT = nil
 local function todayCard()
     local v = sget("today_card", "goal_covers")
     for _i, c in ipairs(TODAY_CHOICES) do if c[1] == v then return v end end
     return "goal_covers"
 end
+-- Swipe Between 2-3 Cards (top of Today Page Card): on, the ticked cards.
+local function todaySwipeOn()
+    local v = sget("today_swipe")
+    if v == nil then return sget("today_card") == "swipe_today" end -- 1.7.0 test builds
+    return v == true
+end
+-- What actually sits in the Today slot: the one card, or the swipe card.
+local function todaySlot() return todaySwipeOn() and "swipe_today" or todayCard() end
 
 -- defined further down, used by the kit hooks
 local flashMode, scheduleClock, quoteOfTheDay, rerollQuote
+local dropDash -- kept dashboard tabs (further down)
 
 -- Appearance → Live Clock (on by default).
 local function liveClock() return sget("live_clock", true) ~= false end
 
 local A, _kit_failed
+
+-- ─── swipe card (Today page card) ───────────────────────────────
+-- One spot shows 2 or 3 cards, one at a time: swipe left/right on it (or tap
+-- its dots) to switch. Only that spot's area redraws. "After Reading Or Sleep":
+-- stay on the one you picked, or show the next one after a book or sleep.
+local SWIPE = {
+    today = { panel = "swipe_today", picks = TODAY_PICKS, default = { "goal_covers", "finished" }, cap = 0.36 },
+}
+local _swipe_i, _swipe_away = {}, {}
+
+local function swipeCards(spot)
+    local sp = SWIPE[spot]
+    local v = sget("swipe_" .. spot .. "_cards")
+    local ok_name = {}
+    for _i, c in ipairs(sp.picks) do ok_name[c[1]] = true end
+    -- in the order you ticked them, up to 3
+    local out, seen = {}, {}
+    if type(v) == "table" then
+        for _i, n in ipairs(v) do
+            if ok_name[n] and not seen[n] and #out < 3 then out[#out + 1] = n; seen[n] = true end
+        end
+    end
+    if #out < 1 then out = { sp.default[1], sp.default[2] } end
+    return out
+end
+
+local function swipeNext() return sget("swipe_return", "stay") == "next" end
+
+local function swipeWeight(spot)
+    if not A then return end
+    local wgt = 0
+    for _i, n in ipairs(swipeCards(spot)) do wgt = max(wgt, A.DASH_WEIGHT[n] or 0.25) end
+    A.DASH_WEIGHT[SWIPE[spot].panel] = min(wgt, SWIPE[spot].cap)
+end
+
+-- Which card a spot shows now (1..n). After a book or sleep, "show the next
+-- one" moves it on once, at the first build back.
+local function swipeIndex(spot, n)
+    local i = _swipe_i[spot] or tonumber(sget("swipe_" .. spot .. "_i", 1)) or 1
+    if _swipe_away[spot] then
+        _swipe_away[spot] = nil
+        if swipeNext() then
+            i = i + 1
+            sput("swipe_" .. spot .. "_i", ((i - 1) % n) + 1)
+        end
+    end
+    i = ((i - 1) % n) + 1
+    _swipe_i[spot] = i
+    return i
+end
+
+-- Start On Tab: which dashboard tab shows when you come back to it (turning
+-- onto its page, after a book, after sleep). "last" = the one you left on.
+local function startTabId() return sget("start_tab", "last") end
+local function goStartTab(why)
+    local id = startTabId()
+    if id == "last" or not A then return end
+    for _i, t in ipairs(A.state.dash_tabs or {}) do
+        if t.kind == "page" and t.id == id then
+            if A.state.dash_page ~= t.page then
+                A.state.dash_page = t.page
+                A.state.month_offset = 0
+                diag("back on the %s tab (%s)", id, why)
+            end
+            return
+        end
+    end
+end
+
+local function swipeAway()
+    for spot in pairs(SWIPE) do _swipe_away[spot] = true end
+end
+
+-- Redraw only the spot: its cell on the dashboard canvas.
+local function repaintSwipe(spot, ctx)
+    local inst = type(ctx) == "table" and ctx._rl_inst
+    if not inst then
+        if A then pcall(A.host.repaint, ctx, { flash = true }) end
+        return
+    end
+    local want = SWIPE[spot].panel .. "|"
+    for _i, r in ipairs(inst.regions or {}) do
+        if r.id == want then
+            inst.request("swipe " .. spot, sget("swipe_flash", false) and "flashui" or "ui", true, { x = r.x, y = r.y, w = r.w, h = r.h })
+            return
+        end
+    end
+    inst.request("swipe " .. spot, flashMode(), true)
+end
+
+local fastSwipe -- below buildSwipe
+local function setSwipe(spot, k, ctx)
+    local cards = swipeCards(spot)
+    local n = #cards
+    k = ((k - 1) % n) + 1
+    if k == (_swipe_i[spot] or 1) then return end
+    _swipe_i[spot] = k
+    sput("swipe_" .. spot .. "_i", k)
+    diag("swipe %s -> %d of %d (%s)", spot, k, n, tostring(cards[k]))
+    if fastSwipe and fastSwipe(spot, k, ctx) then return end
+    repaintSwipe(spot, ctx)
+end
+
+local function flipSwipe(spot, step, ctx)
+    setSwipe(spot, (_swipe_i[spot] or 1) + step, ctx)
+end
+
+-- The swipe card keeps every card it has drawn (until the dashboard is
+-- rebuilt), so switching is a swap of a ready picture: no rebuild of the
+-- dashboard, and only the card's own area is refreshed.
+local function buildSwipe(spot, env)
+    local P = A.panels
+    local cards = swipeCards(spot)
+    local n = #cards
+    local w, h = env.w, env.h
+    local dots_h = n > 1 and max(12, floor(h * 0.075)) or 0
+    local ch = h - dots_h
+    local c = A.canvas{ w = w, h = h, plain = true, page = env.page }
+    local holder = { spot = spot, cards = cards, i = swipeIndex(spot, n), cache = {}, dots = {}, ch = ch }
+
+    function holder.card(name)
+        local child = holder.cache[name]
+        if child then return child end
+        local t0 = now_ms()
+        local ienv = A.makeEnv(name, env.ctx, w, ch, { nested = true, slot = 1, page = env.page })
+        local ok, built = pcall(P[name].build, ienv)
+        if not (ok and built) then
+            diag("SWIPE CARD FAILED %s/%s: %s", spot, tostring(name), tostring(built))
+            built = A.canvas{ w = w, h = ch, plain = true, page = env.page }
+            built:label((P[name] and P[name].title or name) .. " could not be drawn", max(12, floor(ch * 0.08)),
+                w / 2, ch / 2, { anchor = "c", valign = "mid", max_w = w - 20 })
+        end
+        holder.cache[name] = built
+        c.owned[#c.owned + 1] = built
+        holder.built_ms = now_ms() - t0
+        return built
+    end
+
+    -- dots under the card, one picture per position
+    local page_bg, page_fg = A.dashPage()
+    local r = max(3, floor(dots_h * 0.24))
+    local step = r * 5
+    local x0 = w / 2 - (n - 1) * step / 2
+    local function dotsFor(cur)
+        if n < 2 then return nil end
+        if holder.dots[cur] then return holder.dots[cur] end
+        local d = A.canvas{ w = w, h = dots_h, plain = true, page = env.page }
+        for k = 1, n do
+            local cx = x0 + (k - 1) * step
+            d:disc(cx, dots_h / 2, k == cur and r or floor(r * 0.75 + 0.5),
+                k == cur and page_fg or A.mix(page_fg, page_bg, 0.6))
+        end
+        holder.dots[cur] = d
+        c.owned[#c.owned + 1] = d
+        return d
+    end
+    holder.dotsFor = dotsFor
+
+    local name = cards[holder.i]
+    local child = holder.card(name)
+    dotsFor(holder.i)
+    c:op(function(bb, ox, oy)
+        local cur = holder.cache[holder.cards[holder.i]]
+        if cur then cur:paintTo(bb, ox, oy, true) end
+        local d = holder.dots[holder.i]
+        if d then d:paintTo(bb, ox, oy + ch, true) end
+    end)
+    -- tap regions of the card shown now (swapped along with it)
+    for _i, rg in ipairs(child.regions) do c:region(name .. "|" .. rg.id, rg.x, rg.y, rg.w, rg.h) end
+    c:region(name .. "|", 0, 0, w, ch)
+    if n > 1 then
+        c:region("dots", 0, ch, w, dots_h)
+        for k = 1, n do c:region("dot:" .. k, x0 + (k - 1) * step - step / 2, ch, step, dots_h) end
+    end
+    c._swipe_holder = holder
+    return c
+end
+
+-- Switch the card on screen without rebuilding the dashboard: swap the
+-- picture, swap its tap regions, refresh its area (no flash). false = the
+-- dashboard on screen isn't the one built with this card; rebuild instead.
+fastSwipe = function(spot, k, ctx)
+    local inst = type(ctx) == "table" and ctx._rl_inst
+    local dash = inst and inst.box and inst.box[1]
+    if not (dash and dash.owned and inst.rect and inst.regions) then return false end
+    local holder
+    for _i, o in ipairs(dash.owned) do
+        if type(o) == "table" and o._swipe_holder and o._swipe_holder.spot == spot then holder = o._swipe_holder end
+    end
+    if not holder or not holder.cards[k] then return false end
+    local sw = screenShowing(inst.id)
+    if not sw then return false end
+    local panel = SWIPE[spot].panel .. "|"
+    local cell
+    for _i, r in ipairs(inst.regions) do if r.id == panel then cell = r end end
+    if not cell then return false end
+    local t0 = now_ms()
+    holder.built_ms = 0
+    local old, new = holder.cards[holder.i], holder.cards[k]
+    A.D.cover_owner = inst.id -- covers still loading redraw this card when ready
+    local child = holder.card(new)
+    A.D.cover_owner = nil
+    holder.dotsFor(k)
+    holder.i = k
+    -- regions: drop the old card's, add the new one's (dots stay)
+    local pfx_old = panel .. old .. "|"
+    local out = {}
+    for _i, r in ipairs(inst.regions) do
+        if r.id:sub(1, #pfx_old) ~= pfx_old then out[#out + 1] = r end
+    end
+    local base = panel .. new .. "|"
+    out[#out + 1] = { id = base, x = cell.x, y = cell.y, w = cell.w, h = holder.ch }
+    for _i, r in ipairs(child.regions) do
+        out[#out + 1] = { id = base .. r.id, x = cell.x + r.x, y = cell.y + r.y, w = r.w, h = r.h }
+    end
+    inst.regions = out
+    dash.regions = out -- a kept Today tab brings back the card shown now
+    local rr = inst.rect
+    local region = Geom:new{ x = rr.x + cell.x, y = rr.y + cell.y, w = cell.w, h = cell.h }
+    local mode = sget("swipe_flash", false) and "flashui" or "ui"
+    UIManager:setDirty(sw, function() return mode, region, true end)
+    diag("swipe card swapped in place (%s, %s) in %d ms",
+        new, holder.built_ms > 0 and ("drawn in " .. holder.built_ms .. " ms") or "ready", now_ms() - t0)
+    return true
+end
+
+local function tapSwipe(spot, env, region)
+    if type(region) ~= "string" then return end
+    if region == "dots" then return flipSwipe(spot, 1, env.ctx) end
+    local k = tonumber(region:match("^dot:(%d+)$"))
+    if k then return setSwipe(spot, k, env.ctx) end
+    local inner, sub = region:match("^([%w_]+)|(.*)$")
+    local def = inner and A.panels[inner]
+    if not def then return end
+    sub = (sub ~= "") and sub or nil
+    local custom = A.customTap and A.customTap(inner, sub)
+    if custom then return A.runTapAction(custom, env.ctx) end
+    if not def.tap then return end
+    local ok, err = pcall(def.tap, A.makeEnv(inner, env.ctx, 0, 0, { nested = true, slot = 1 }), sub)
+    if not ok then diag("TAP FAILED %s in swipe %s: %s", inner, spot, tostring(err)) end
+    if def.keep and def.keep(sub) then A.host.repaint(env.ctx, {}) end
+end
+
+-- A spot's built-in place on the Today page, and on a Today page you've
+-- edited in Pages and cards (saved whole): swap one card name for another.
+local function swapTodayCard(slot, old, new)
+    if not A then return end
+    if slot then slot.row[slot.k] = new end
+    local saved = A.get("dash_rows_today", nil)
+    if type(saved) == "table" then
+        for _j, r in ipairs(saved) do
+            if type(r) == "table" and type(r.c) == "table" then
+                for k, n in ipairs(r.c) do if n == old then r.c[k] = new end end
+            end
+        end
+        A.set("dash_rows_today", saved)
+    end
+    A.epoch = (A.epoch or 0) + 1
+end
+
+-- Menu: Alternate Or Keep Last (the swipe card after a book or sleep).
+local function alternateMenu(done)
+    return {
+        text_func = function()
+            return _("Alternate Or Keep Last: ") .. (swipeNext() and _("Alternate") or _("Keep Last"))
+        end,
+        enabled_func = todaySwipeOn,
+        help_text = _("After a book or sleep: Alternate shows the next card, Keep Last stays on the card you swiped to."),
+        sub_item_table = {
+            {
+                text = _("Alternate"), radio = true,
+                checked_func = swipeNext,
+                keep_menu_open = true,
+                callback = function() sput("swipe_return", "next"); done() end,
+            },
+            {
+                text = _("Keep Last"), radio = true,
+                checked_func = function() return not swipeNext() end,
+                keep_menu_open = true,
+                callback = function() sput("swipe_return", nil); done() end,
+            },
+        },
+    }
+end
+
 local function kit()
     if A then return A end
     if _kit_failed then return nil end
@@ -262,6 +558,13 @@ local function kit()
     end
 
     local H, D = A.host, A.D
+
+    -- data dropped (book menu, settings): kept tabs go too
+    local origInvalidate = D.invalidate
+    D.invalidate = function(...)
+        for _id, i in pairs(INSTANCES) do if i.dashboard then dropDash(i) end end
+        return origInvalidate(...)
+    end
 
     -- Size (Appearance) is the kit's Text size: one value per card, ours.
     A.textSizePct = function(_pfx, id)
@@ -337,13 +640,28 @@ local function kit()
                     for k, name in ipairs(row) do
                         if name == "bookclub" then
                             TODAY_SLOT = { row = row, k = k }
-                            row[k] = todayCard()
                         end
                     end
                 end
             end
         end
     end
+
+    -- Swipe spots: a card that shows one of 2-3 cards (not offered in Pages
+    -- and cards; picked under Today Page Card).
+    for spot, sp in pairs(SWIPE) do
+        A.panels[sp.panel] = {
+            title = "Swipe cards (Today card)",
+            tone = "ink", ratio = 0.36, ratio_narrow = 0.62,
+            does = "switches cards",
+            summary = "Two or three cards in one spot: swipe left or right, or tap the dots, to switch.",
+            members = function() return swipeCards(spot) end,
+            build = function(env) return buildSwipe(spot, env) end,
+            tap = function(env, region) return tapSwipe(spot, env, region) end,
+        }
+        swipeWeight(spot)
+    end
+    if TODAY_SLOT then TODAY_SLOT.row[TODAY_SLOT.k] = todaySlot() end
 
     -- Tab order: Today, Monthly, Yearly, Trends, Library. Pages are stored by
     -- id, not by position, so reordering keeps everyone's edited pages intact.
@@ -652,7 +970,12 @@ local function newInstance(id, card, dashboard)
         if now then UIManager:nextTick(inst.timer) else UIManager:scheduleIn(0.3, inst.timer) end
     end
     -- one stable function per card: Reading Log compares it
-    inst.refresh = function() inst.request("data landed", "ui") end
+    inst.refresh = function()
+        -- new data: kept tabs drawn without it go now, even if a tap
+        -- redraw takes this request over before it runs
+        if inst.dashboard and dropDash then dropDash(inst) end
+        inst.request("data landed", "ui")
+    end
     inst.config = {
         get = function(_, key, default)
             local v = sget("cfg_" .. id .. "_" .. key)
@@ -682,10 +1005,67 @@ local function bookshelfCtx(inst, w, h)
     }
 end
 
-local function renderCanvas(inst, bctx)
+-- ─── dashboard tabs kept ready ─────────────────────────────────────────────
+-- Each tab's last drawing is kept for up to a minute (the data's own
+-- freshness), so switching back to a tab or turning back onto the page
+-- doesn't redraw it. Anything that changes what it shows - other data,
+-- settings, theme, night mode, size, the day, the clock's minute - draws it
+-- again. Data landing or a reset (book menu, settings) drops them all.
+local DASH_KEEP_S = 60
+local _dash_cache = {}
+
+local function realFree(c)
+    c.free = nil -- back to the canvas's own free
+    if type(c.free) == "function" then pcall(c.free, c) end
+end
+
+dropDash = function(inst)
+    for page, e in pairs(_dash_cache) do
+        -- the one on screen is freed by the normal swap, not here
+        if inst and inst.box and inst.box[1] == e.canvas then e.canvas.free = nil else realFree(e.canvas) end
+        _dash_cache[page] = nil
+    end
+end
+
+local function dashKey(inst, w, h)
+    local Ak = A
+    return table.concat({
+        floor(w), floor(h), tostring(Ak.state.dash_page or 1), tostring(Ak.epoch or 0),
+        tostring(Ak.themeId()), Screen.night_mode and "n" or "d", tostring(Ak.state.month_offset or 0),
+        os.date("%Y-%m-%d"), tostring(Ak.textSizePct(nil, inst.id)),
+    }, "|")
+end
+
+local function renderCanvas(inst, bctx, reason)
     local Ak = kit()
     if not Ak then return nil, "kit not loaded" end
     local ok, canvas
+    -- a tab drawn less than a minute ago with nothing changed: use it
+    local key, page
+    if inst.dashboard then
+        -- let go of tabs past their minute (not the one on screen)
+        for p, e in pairs(_dash_cache) do
+            if os.time() - e.at >= DASH_KEEP_S and not (inst.box and inst.box[1] == e.canvas) then
+                realFree(e.canvas)
+                _dash_cache[p] = nil
+            end
+        end
+        reason = tostring(reason or "")
+        if reason:find("^data") or reason:find("^cover") then
+            dropDash(inst)
+        elseif not reason:find("^clock") then
+            key, page = dashKey(inst, bctx.width, bctx.height), Ak.state.dash_page or 1
+            local e = _dash_cache[page]
+            if e and e.key == key and os.time() - e.at < DASH_KEEP_S
+                and (not e.minute or e.minute == os.date("%H:%M")) then
+                local c = e.canvas
+                if bctx.set_tap_regions then pcall(bctx.set_tap_regions, c.regions) end
+                inst.clock = c.clock_y and { y = c.clock_y, h = c.clock_h } or nil
+                if inst.clock and liveClock() then scheduleClock() end
+                return c, nil, true
+            end
+        end
+    end
     -- covers still being extracted are noted against this card
     Ak.D.cover_pending[inst.id] = nil
     Ak.D.cover_owner = inst.id
@@ -696,6 +1076,23 @@ local function renderCanvas(inst, bctx)
     end
     Ak.D.cover_owner = nil
     if not ok or type(canvas) ~= "table" then return nil, canvas end
+    if inst.dashboard then
+        page = Ak.state.dash_page or 1
+        key = key or dashKey(inst, bctx.width, bctx.height)
+        local old = _dash_cache[page]
+        if old and old.canvas ~= canvas then
+            if inst.box and inst.box[1] == old.canvas then old.canvas.free = nil else realFree(old.canvas) end
+        end
+        -- covers still loading: not kept (they'd be missing next time)
+        local pend = Ak.D.cover_pending[inst.id]
+        if not (pend and next(pend)) then
+            canvas.free = function() end -- kept: SimpleUI dropping its box mustn't free it
+            _dash_cache[page] = { canvas = canvas, key = key, at = os.time(),
+                minute = canvas.clock_y and os.date("%H:%M") or nil }
+        else
+            _dash_cache[page] = nil
+        end
+    end
     return canvas
 end
 
@@ -723,7 +1120,7 @@ renderInto = function(inst, mode, reason, strip)
     noteRefresh(tostring(reason))
     local t0 = now_ms()
     inst.regions = nil
-    local canvas, err = renderCanvas(inst, bookshelfCtx(inst, inst.w, inst.h))
+    local canvas, err, kept = renderCanvas(inst, bookshelfCtx(inst, inst.w, inst.h), reason)
     if not canvas then
         diag("RENDER FAILED %s on repaint: %s", inst.id, tostring(err))
         return refreshScreen("repaint failed: " .. inst.id)
@@ -735,11 +1132,13 @@ renderInto = function(inst, mode, reason, strip)
     local r = inst.rect
     local region = Geom:new{ x = r.x, y = r.y, w = r.w, h = r.h }
     if strip and tonumber(strip.y) and tonumber(strip.h) then
-        region = Geom:new{ x = r.x, y = r.y + floor(strip.y), w = r.w, h = max(1, floor(strip.h)) }
+        local sx = tonumber(strip.x) and floor(strip.x) or 0
+        local sw_ = tonumber(strip.w) and floor(strip.w) or r.w
+        region = Geom:new{ x = r.x + sx, y = r.y + floor(strip.y), w = max(1, sw_), h = max(1, floor(strip.h)) }
     end
     UIManager:setDirty(sw, function() return mode, region, true end)
-    diag("repaint %s in place (%s, %s) built in %d ms | %d tap regions",
-        inst.id, tostring(reason), mode, now_ms() - t0, #(inst.regions or {}))
+    diag("repaint %s in place (%s, %s) %s in %d ms | %d tap regions",
+        inst.id, tostring(reason), mode, kept and "ready (kept)" or "built", now_ms() - t0, #(inst.regions or {}))
 end
 
 -- slot_w/slot_h: the space SimpleUI gave the module. In full-screen layout
@@ -753,6 +1152,7 @@ local function wrapCanvas(inst, canvas, slot_w, slot_h, full_x, full_y)
     }
     box.ges_events = {
         ReadingLogTap = { GestureRange:new{ ges = "tap", range = function() return inst.rect or box.dimen end } },
+        ReadingLogSwipe = { GestureRange:new{ ges = "swipe", range = function() return inst.rect or box.dimen end } },
     }
     inst.box, inst.w, inst.h, inst.rect = box, w, h, nil
     local base_paint = box.paintTo
@@ -801,6 +1201,31 @@ local function wrapCanvas(inst, canvas, slot_w, slot_h, full_x, full_y)
         _last_tap = os.time()
         return true
     end
+    -- Left/right swipe that starts on a swipe spot switches its card; any
+    -- other swipe is left to SimpleUI (page turns).
+    function box:onReadingLogSwipe(_, ges)
+        if not inst.dashboard or not ges or not ges.pos then return false end
+        local dir = ges.direction
+        if dir ~= "west" and dir ~= "east" then return false end
+        local o = inst.rect or self.dimen
+        local rx, ry = ges.pos.x - (o.x or 0), ges.pos.y - (o.y or 0)
+        local spot
+        for _i, r in ipairs(inst.regions or {}) do
+            local s = type(r.id) == "string" and r.id:match("^swipe_(%a+)|$")
+            if s and SWIPE[s] and rx >= r.x and rx < r.x + r.w and ry >= r.y and ry < r.y + r.h then
+                spot = s
+                break
+            end
+        end
+        if not spot or not kit() then
+            diag("swipe %s at %d,%d: not on the swipe card, left to SimpleUI", dir, rx, ry)
+            return false
+        end
+        diag("swipe %s on %s at %d,%d", dir, spot, rx, ry)
+        flipSwipe(spot, dir == "west" and 1 or -1, bookshelfCtx(inst, w, h))
+        _last_tap = os.time()
+        return true
+    end
     return box
 end
 
@@ -846,7 +1271,7 @@ local function makeModule(inst, title)
         inst.regions = nil
         local bctx = bookshelfCtx(inst, w, h)
         local t0 = now_ms()
-        local canvas, err = renderCanvas(inst, bctx)
+        local canvas, err, kept = renderCanvas(inst, bctx, "build")
         if not canvas then
             logger.warn(TAG, inst.id, "render failed:", err)
             diag("RENDER FAILED %s (%dx%d): %s", inst.id, w, h, tostring(err))
@@ -854,8 +1279,8 @@ local function makeModule(inst, title)
         end
         inst.regions = inst.regions or canvas.regions
         local avail = contentHeight()
-        diag("built %s %dx%d (asked %dx%d) in %d ms | size %s%% | theme %s, night %s | %d tap regions%s",
-            inst.id, canvas.w or -1, canvas.h or -1, w, h, now_ms() - t0, tostring(Ak.textSizePct(nil, inst.id)),
+        diag("%s %s %dx%d (asked %dx%d) in %d ms | size %s%% | theme %s, night %s | %d tap regions%s",
+            kept and "reused kept" or "built", inst.id, canvas.w or -1, canvas.h or -1, w, h, now_ms() - t0, tostring(Ak.textSizePct(nil, inst.id)),
             tostring(Ak.themeId()), Screen.night_mode and "ON" or "off", #(inst.regions or {}),
             (canvas.h or 0) > avail and string.format("  <-- TALLER THAN THE PAGE (%d px available)", avail) or "")
         if (canvas.w and canvas.w ~= w) or (canvas.h and canvas.h ~= h) then
@@ -1080,6 +1505,29 @@ local function makeModule(inst, title)
                 function(v) local Ak = kit(); if Ak then Ak.set("activity_page_goal", v) end end,
                 1, 2000, 5, nil, _("Fills the pages ring.")),
         }
+        -- Book club's own options (collection, this month's books, title),
+        -- here so they're not three menus deep.
+        goals[#goals].separator = true
+        goals[#goals + 1] = {
+            text = _("Book Club"),
+            help_text = _("The Book Club card: which collection, this month's picks, and its title."),
+            sub_item_table_func = function()
+                local Ak = kit()
+                if not Ak or type(Ak.S.cardContentMenu) ~= "function" then return {} end
+                local mctx = {
+                    menu = ctx_menu, pfx = ctx_menu and ctx_menu.pfx or "simpleui_hs_",
+                    mod_id = inst.id, entry = { id = inst.id }, config = inst.config,
+                    menu_refresh = function()
+                        Ak.D.invalidate()
+                        Ak.epoch = (Ak.epoch or 0) + 1
+                        refreshScreen("book club settings: " .. inst.id)
+                    end,
+                }
+                local ok, list = pcall(Ak.S.cardContentMenu, "bookclub", mctx)
+                if not ok then diag("BOOK CLUB MENU FAILED: %s", tostring(list)) end
+                return (ok and type(list) == "table") and list or {}
+            end,
+        }
 
         local items = {
             { text = _("Reading Goals"), sub_item_table = goals },
@@ -1115,47 +1563,149 @@ local function makeModule(inst, title)
             items[#items + 1] = quoteMenu(done)
         end
         if inst.dashboard then
-            local today_items = {}
+            -- Swipe Between 2-3 Cards on top. Off: pick one card. On: tick 2 or 3.
+            local function picked()
+                local set = {}
+                for _i, n in ipairs(swipeCards("today")) do set[n] = true end
+                return set
+            end
+            local function swipeChanged(old)
+                local new = todaySlot()
+                _swipe_i.today = nil
+                swipeWeight("today")
+                if kit() then
+                    if old ~= new then swapTodayCard(TODAY_SLOT, old, new) else A.epoch = (A.epoch or 0) + 1 end
+                end
+                done()
+            end
+            local today_items = {
+                {
+                    text_func = function()
+                        return _("Swipe Between 2-3 Cards") .. (todaySwipeOn() and (" (" .. #swipeCards("today") .. ")") or "")
+                    end,
+                    checked_func = todaySwipeOn,
+                    keep_menu_open = true,
+                    help_text = _("On: tick up to 3 cards below (a 4th replaces the oldest), then swipe left or right on the card, or tap its dots, to switch."),
+                    callback = function()
+                        local old = todaySlot()
+                        if not todaySwipeOn() then
+                            -- start from the card you have, plus one more
+                            local saved = sget("swipe_today_cards")
+                            if type(saved) ~= "table" or #saved < 2 then
+                                local one = todayCard()
+                                sput("swipe_today_cards", { one, one == "goal_covers" and "finished" or "goal_covers" })
+                            end
+                            sput("today_swipe", true)
+                        else
+                            sput("today_swipe", false)
+                        end
+                        diag("Today page card swipe: %s", tostring(todaySwipeOn()))
+                        swipeChanged(old)
+                    end,
+                    separator = true,
+                },
+            }
             for _i, c in ipairs(TODAY_CHOICES) do
                 today_items[#today_items + 1] = {
-                    text = _(c[2]), radio = true,
-                    checked_func = function() return todayCard() == c[1] end,
+                    text = _(c[2]),
+                    checked_func = function()
+                        if todaySwipeOn() then return picked()[c[1]] == true end
+                        return todayCard() == c[1]
+                    end,
                     keep_menu_open = true,
                     callback = function()
+                        if todaySwipeOn() then
+                            -- tick: added at the end (a 4th replaces the oldest);
+                            -- untick: removed, but at least one stays
+                            local list = {}
+                            for _j, n in ipairs(swipeCards("today")) do
+                                if n ~= c[1] then list[#list + 1] = n end
+                            end
+                            if picked()[c[1]] then
+                                if #list < 1 then return end
+                            else
+                                list[#list + 1] = c[1]
+                                while #list > 3 do table.remove(list, 1) end
+                            end
+                            sput("swipe_today_cards", list)
+                            diag("swipe today cards: %s", table.concat(list, ", "))
+                            swipeChanged("swipe_today")
+                            return
+                        end
                         local old = todayCard()
                         if old == c[1] then return end
                         sput("today_card", c[1])
-                        local Ak = kit()
-                        if Ak then
-                            if TODAY_SLOT then TODAY_SLOT.row[TODAY_SLOT.k] = c[1] end
-                            -- a Today page edited in Pages and cards is saved whole:
-                            -- swap the old choice there too
-                            local saved = Ak.get("dash_rows_today", nil)
-                            if type(saved) == "table" then
-                                for _j, r in ipairs(saved) do
-                                    if type(r) == "table" and type(r.c) == "table" then
-                                        for k, n in ipairs(r.c) do if n == old then r.c[k] = c[1] end end
-                                    end
-                                end
-                                Ak.set("dash_rows_today", saved)
-                            end
-                            Ak.epoch = (Ak.epoch or 0) + 1
-                        end
+                        if kit() then swapTodayCard(TODAY_SLOT, old, c[1]) end
                         diag("Today page card: %s -> %s", old, c[1])
                         done()
                     end,
                 }
             end
+            today_items[#today_items].separator = true
+            today_items[#today_items + 1] = alternateMenu(done)
+            today_items[#today_items + 1] = {
+                text = _("Flash On Swipe"),
+                help_text = _("Flash the card when you swipe to another one, to clear ghosting. Off (default) is faster: no flash, a little ghosting may show."),
+                enabled_func = todaySwipeOn,
+                checked_func = function() return sget("swipe_flash", false) == true end,
+                keep_menu_open = true,
+                callback = function() sput("swipe_flash", not (sget("swipe_flash", false) == true)) end,
+            }
             table.insert(items, 2, {
                 text_func = function()
+                    if todaySwipeOn() then
+                        return _("Today Page Card: ") .. _("Swipe") .. " (" .. #swipeCards("today") .. ")"
+                    end
                     for _i, c in ipairs(TODAY_CHOICES) do
                         if c[1] == todayCard() then return _("Today Page Card: ") .. _(c[2]) end
                     end
                     return _("Today Page Card")
                 end,
-                help_text = _("Which card sits under the rings on the Today tab. Book club uses a collection named like \"Book club\" (set it in that card's Reading Log settings)."),
+                help_text = _("Which card sits under the rings on the Today tab. Book club uses a collection named like \"Book club\" (set it in that card's Reading Log settings). Swipe Between 2-3 Cards shows 2 or 3 of them in turn."),
                 sub_item_table = today_items,
             })
+            items[#items + 1] = {
+                text_func = function()
+                    local id = startTabId()
+                    if id == "last" then return _("Start On Tab: Last Viewed") end
+                    for _i, t in ipairs((kit() and A.state.dash_tabs) or {}) do
+                        if t.id == id then return _("Start On Tab: ") .. tostring(t.label) end
+                    end
+                    return _("Start On Tab: ") .. id
+                end,
+                help_text = _("Which tab the dashboard shows when you come back to it: turning onto its page, after a book or after sleep. Last Viewed keeps the one you left on."),
+                sub_item_table_func = function()
+                    local list = {
+                        {
+                            text = _("Last Viewed"), radio = true,
+                            checked_func = function() return startTabId() == "last" end,
+                            keep_menu_open = true,
+                            callback = function() sput("start_tab", nil) end,
+                            separator = true,
+                        },
+                    }
+                    local Ak = kit()
+                    local tabs = Ak and Ak.state.dash_tabs
+                    if not tabs and Ak then
+                        -- dashboard not drawn yet since start: the pages themselves
+                        tabs = {}
+                        for i, pg in ipairs(Ak.dashPages()) do
+                            tabs[#tabs + 1] = { kind = "page", page = i, id = pg.id, label = pg.label }
+                        end
+                    end
+                    for _i, t in ipairs(tabs or {}) do
+                        if t.kind == "page" and t.id then
+                            list[#list + 1] = {
+                                text = tostring(t.label), radio = true,
+                                checked_func = function() return startTabId() == t.id end,
+                                keep_menu_open = true,
+                                callback = function() sput("start_tab", t.id) end,
+                            }
+                        end
+                    end
+                    return list
+                end,
+            }
             items[#items + 1] = {
                 text = _("Start On First Page After Reading Or Sleep"),
                 help_text = _("Opening a book or putting the device to sleep sends the home screen back to page 1."),
@@ -1225,6 +1775,7 @@ watchWindow = function(inst)
         if not vis and self._rl_vis then
             cancelPrewarm()
             cancelClock()
+            goStartTab("page turned")
         end
         if self._rl_vis ~= nil and vis ~= self._rl_vis and sget("flash_clean", true) then
             UIManager:setDirty(nil, "full")
@@ -1232,6 +1783,26 @@ watchWindow = function(inst)
         end
         self._rl_vis = vis
         return unpack(res)
+    end
+    -- SimpleUI turns pages on a swipe before the cards see it: a left/right
+    -- swipe that starts on the Today swipe card goes to the card instead.
+    local orig_he = w.handleEvent
+    if type(orig_he) == "function" then
+        w.handleEvent = function(self, event, ...)
+            if type(event) == "table" and event.handler == "onGesture" then
+                local ges = event.args and event.args[1]
+                if type(ges) == "table" and ges.ges == "swipe"
+                    and (ges.direction == "west" or ges.direction == "east") then
+                    for _id, i in pairs(INSTANCES) do
+                        if i.dashboard and i.on == self and i.box and i.rect then
+                            local ok, took = pcall(i.box.onReadingLogSwipe, i.box, nil, ges)
+                            if ok and took then return true end
+                        end
+                    end
+                end
+            end
+            return orig_he(self, event, ...)
+        end
     end
     diag("watching %s for page turns", tostring(w.name or "home window"))
 end
@@ -1383,6 +1954,9 @@ end
 function Plugin:onSuspend()
     cancelClock()
     cancelPrewarm()
+    swipeAway()
+    goStartTab("sleep")
+    for _id, i in pairs(INSTANCES) do if i.dashboard then dropDash(i) end end
     resetHomePage("sleep")
 end
 
@@ -1404,6 +1978,9 @@ end
 function Plugin:onReaderReady()
     cancelPrewarm()
     cancelClock()
+    swipeAway()
+    goStartTab("book opened")
+    for _id, i in pairs(INSTANCES) do if i.dashboard then dropDash(i) end end
     resetHomePage("book opened")
 end
 
