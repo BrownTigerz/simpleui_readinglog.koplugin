@@ -60,9 +60,11 @@ All of these are in Module Settings → Reading Log · Dashboard.
 
 | Setting | What it does |
 | --- | --- |
-| **Reading Goals** | Books this year, read outside KOReader, minutes a day, pages a day. Books and minutes are SimpleUI's own Annual and Daily goals (Simple UI → Stats), so changing them in either place changes both. |
-| **Today Page Card** | The card under the rings on the Today tab: Year Goal With Covers (default), Year Goal, Book Club, Recently Finished or TBR Shelf. |
-| **Reading Log Settings** | Pages and cards (any card on any page, up to 7 tabs, move or remove pages, put it all back), margin, each card's own options, card colour, Look and colours (theme, accents, week start). |
+| **Reading Goals** | Books this year, read outside KOReader, minutes a day, pages a day. Books and minutes are SimpleUI's own Annual and Daily goals (Simple UI → Stats), so changing them in either place changes both. **Book Club** is here too: its collection, this month's picks and its title. |
+| **Today Page Card** | The card under the rings on the Today tab: Year Goal With Covers (default), Year Goal, Book Club, Recently Finished or TBR Shelf. Turn on **Swipe Between 2-3 Cards** at the top, then tick up to 3 of those cards to swipe between (a 4th replaces the oldest). |
+| **Today Page Card → Alternate Or Keep Last** | With swipe on: **Alternate** shows the next card each time you come back from a book or sleep; **Keep Last** (default) stays on the one you swiped to. |
+| **Today Page Card → Flash On Swipe** | Flashes the card when you swipe, to clear ghosting. Off by default: a swipe then takes about 0.2 s; with the flash, about 0.6 s. |
+| **Reading Log Settings** | Pages and cards (any card on any page, up to 7 tabs, move or remove pages, put it all back), margin, each card's own options, card colour, Look and colours (theme, accents, week start). Accents include **Black**, which shows as white on the Dark theme so it stays visible. |
 | **Quote Of The Day** | Where the quote comes from: **My Quote File** (default; a quote file in `koreader/settings/simpleui/sui_quotes/`, the same folder SimpleUI's Quote of the Day uses) or **My Highlights**. Pick which file underneath. |
 | **Appearance → Layout** | **In The Page** (default) sits in SimpleUI's page like any module. **Full Screen** fills everything between the status bar and the nav bar, so every card is bigger. |
 | **Appearance → Bottom Space** | Full Screen only. Room left under the dashboard for SimpleUI's page dots. **Auto** fits the dots; add or take away pixels to fine-tune. |
@@ -71,12 +73,14 @@ All of these are in Module Settings → Reading Log · Dashboard.
 | **Appearance → Night Mode Theme** | The theme used while night mode is on: Dark (default), Paper, White or Same As Day. |
 | **Appearance → Flash To Clear Ghosting** | Flashes the screen when you switch tabs or turn onto or off the dashboard page, so the old page doesn't linger. Turn it off for faster tab switches at the cost of some ghosting. |
 | **Appearance → Live Clock** | The Banner and Today tab clock update every minute while they're on screen (on by default). Off: the clock updates whenever the page redraws. |
+| **Start On Tab** | Which tab shows when you come back to the dashboard (turning onto its page, after a book or sleep): **Last Viewed** (default) or a tab of your choice, e.g. Today. |
 | **Start On First Page After Reading Or Sleep** | Opening a book or putting the device to sleep sends the home screen back to page 1. |
 
 ## Notes
 - **Book Details:** "Details" on a book opens SimpleUI's own book menu (mark finished or on hold, collections, book info…).
 - **Finish dates:** reopening a finished book for a moment can make KOReader mark it finished again with today's date. Reading Log ignores that and uses the last day of real reading (at least 1 minute or 2 pages), so Longest Reads, the monthly lists and Year In Covers stay correct. If Bookshelf is also installed, its own Reading goals card still uses KOReader's date and may count that book in the wrong month.
-- **Redrawing:** tabs, month arrows and data updates redraw only the dashboard, not the whole home page. The hidden tabs are pre-loaded a few seconds after the dashboard first shows.
+- **Swipe cards:** swipe left or right on the card, or tap the dots under it, to switch. Only that card redraws. A swipe anywhere else still turns SimpleUI pages, so start page-turn swipes off the card.
+- **Redrawing:** tabs, month arrows and data updates redraw only the dashboard, not the whole home page. The hidden tabs are pre-loaded a few seconds after the dashboard first shows, and each tab you've visited is kept ready for a minute, so switching back (or turning back onto the page) shows it straight away. New data, a setting, the theme, night mode or the clock's minute draws it fresh; opening a book or sleep lets them go.
 - **Clock:** with Live Clock on, the Banner and Today tab clock update every minute, redrawing only the clock. It only runs while the clock is on screen: not while you read, on another home page or another tab, and it stops on sleep and restarts on wake.
 - **Quote files:** Lua files returning `{ { q = "Quote", a = "Author", b = "Book (optional)" }, ... }`, like `Quotes.lua` from [KOReader patches](https://github.com/BrownTigerz/-KOReader.patches). "Another" on the card shows the next one; one quote a day otherwise.
 
