@@ -164,6 +164,7 @@ local function makeEnv(name, ctx, w, h, o)
         nested = o.nested or false,
         native = native,
         page = o.page,
+        see = o.see or false,
         bleed = false,
         sample = false,
         refresh = ctx and ctx.refresh or nil,
@@ -448,8 +449,13 @@ end
 
 local function buildDashboard(ctx, w, h)
     local page_bg, page_fg, dark, _, page_look = A.dashPage()
-    -- A theme with its own page colour: paint it, out to the edges of the cell.
-    local c = A.canvas{ w = w, h = h, plain = true, bleed = page_look ~= nil, fill = page_look and page_bg or nil }
+    -- A theme with its own page colour: paint it, out to the edges of the
+    -- cell. Over a Simple UI wallpaper with this module's Background Opacity
+    -- below Solid, leave the page unpainted so the wallpaper shows between
+    -- the cards (the cards and the tab bar stay solid, to stay readable).
+    local see = ctx and H.seeThrough(ctx.pfx, ctx.mod_id) or false
+    local c = A.canvas{ w = w, h = h, plain = true, bleed = page_look ~= nil and not see,
+        fill = (page_look and not see) and page_bg or nil }
     local th = A.theme()
     local ts = textScale()
     local gap = max(6, floor(min(w, h) * 0.016 + 0.5))
@@ -470,6 +476,12 @@ local function buildDashboard(ctx, w, h)
         local bar_h = A.clamp(floor(h * 0.056 + 0.5), 40, 110)
         local bar_w = min(w, max(floor(w * 0.72), #tabs * floor(bar_h * 2.3)))
         local bx, by = ox + floor((w - bar_w) / 2), oy + h - bar_h
+        -- Tab Bar Position: up (-) or down (+) by that many pixels. Down only
+        -- into the margin below; up leaves the cards at least half the room.
+        local adj = tonumber(A.get("tabs_adjust", 0)) or 0
+        if adj ~= 0 then
+            by = A.clamp(by + floor(adj), oy + floor(h * 0.5), oy + h + m - bar_h)
+        end
         local bw_ = max(2, floor(bar_h * 0.045 + 0.5))
         c:frame(bx, by, bar_w, bar_h, bar_h / 2, bw_, page_fg, page_bg, page_bg)
         local inner = bar_w - bar_h * 0.5
@@ -490,7 +502,7 @@ local function buildDashboard(ctx, w, h)
             c:put(t_tab, cx, by + bar_h / 2, "c", "mid")
             c:region("tab:" .. i, cx - cell / 2, by, cell, bar_h)
         end
-        body_h = h - bar_h - gap
+        body_h = min(h - bar_h - gap, by - oy - gap)
     end
 
     -- Short, wide cell (the hero area): there is not room for a whole page,
@@ -536,7 +548,7 @@ local function buildDashboard(ctx, w, h)
         elseif st then
             kicker = "This week" .. dot .. A.plural(st.week_pages, "page", "pages")
         end
-        local env = { w = w, h = head_h, ts = ts }
+        local env = { w = w, h = head_h, ts = ts, see = see }
         local ok, hc = pcall(P.heading, env, kicker, pageLabel(page), nav)
         if ok and hc then c:sub(hc, ox, oy + y, "heading|") end
         y = y + head_h + floor(gap * 0.6)
@@ -553,7 +565,7 @@ local function buildDashboard(ctx, w, h)
         for ni, name in ipairs(names) do
             local x = (ni - 1) * (pw + gap)
             local width = (ni == #names) and (w - x) or pw
-            local env = makeEnv(name, ctx, width, rh, { nested = true, slot = 1, page = page_look })
+            local env = makeEnv(name, ctx, width, rh, { nested = true, slot = 1, page = page_look, see = see })
             local child = buildPanel(name, env)
             c:sub(child, ox + x, oy + y, name .. "|")
             if P[name].tick then c.clock_y, c.clock_h = oy + y, rh end
