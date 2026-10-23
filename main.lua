@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.7.1, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.7.2, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Built for Simple UI by Doctor Hetfield
@@ -83,6 +83,19 @@ local function diag(fmt, ...)
     if type(D) == "table" and type(D.log) == "function" then
         pcall(D.log, "readinglog: " .. fmt, ...)
     end
+end
+
+-- Whether the SimpleUI diagnostics patch is there to take diag lines: lines
+-- that cost something to put together are only built then.
+local function diagOn()
+    local D = package.loaded["simpleui_diagnostics"]
+    if type(D) ~= "table" or type(D.log) ~= "function" then return false end
+    -- 2.10.1+: whether it's still logging (its 30-minute window)
+    if type(D.on) == "function" then
+        local ok, v = pcall(D.on)
+        return ok and v and true or false
+    end
+    return true
 end
 
 local function now_ms()
@@ -1037,6 +1050,7 @@ local function seeThrough(inst)
     local pfx = type(inst.sctx) == "table" and inst.sctx.pfx or "simpleui_hs_"
     local ok, see = pcall(Ak.host.seeThrough, pfx, inst.id)
     see = ok and see or false
+    if not diagOn() then return see end
     local wp_on, strength = "?", "?"
     local okw, WP = pcall(require, "features/sui_wallpaper")
     if okw and type(WP) == "table" then
@@ -1067,6 +1081,22 @@ local function dashKey(inst, w, h)
     }, "|")
 end
 
+-- Diagnostics: where the dashboard's heading, cards and tab bar sit, when
+-- that changes (Tab Bar Position, page, size).
+local function logLayout(inst, canvas)
+    if not (diagOn() and inst.dashboard and type(canvas) == "table" and type(canvas.layout) == "table") then return end
+    local L = canvas.layout
+    local line = string.format("layout %s tab %s: heading %s | cards y %s to %s | tab bar y %s (h %s), moved %s px (Tab Bar Position %s)",
+        inst.id, tostring(A.state.dash_page or 1),
+        L.head_y and string.format("y %d (h %d)", L.head_y, L.head_h) or "none",
+        tostring(L.cards_y), tostring(L.cards_bottom), tostring(L.tabs_y), tostring(L.tabs_h),
+        tostring(L.moved or 0), tostring(A.get("tabs_adjust", 0)))
+    if inst._last_layout ~= line then
+        inst._last_layout = line
+        diag("%s", line)
+    end
+end
+
 local function renderCanvas(inst, bctx, reason)
     local Ak = kit()
     if not Ak then return nil, "kit not loaded" end
@@ -1093,6 +1123,7 @@ local function renderCanvas(inst, bctx, reason)
                 if bctx.set_tap_regions then pcall(bctx.set_tap_regions, c.regions) end
                 inst.clock = c.clock_y and { y = c.clock_y, h = c.clock_h } or nil
                 if inst.clock and liveClock() then scheduleClock() end
+                logLayout(inst, c)
                 return c, nil, true
             end
         end
@@ -1123,6 +1154,7 @@ local function renderCanvas(inst, bctx, reason)
         else
             _dash_cache[page] = nil
         end
+        logLayout(inst, canvas)
     end
     return canvas
 end
@@ -1458,7 +1490,7 @@ local function makeModule(inst, title)
                     return _("Tab Bar Position: ") .. (adj == 0 and _("Default")
                         or ((adj > 0 and "+" or "") .. adj .. " px"))
                 end,
-                help_text = _("Moves the Today / Monthly / Yearly tab bar up (-) or down (+) from where it normally sits. Handy with a wallpaper showing through. Moving it up makes the cards above it shorter; it can only go down into the dashboard's margin."),
+                help_text = _("Moves the Today / Monthly / Yearly tab bar up (-) or down (+) from where it normally sits. Handy with a wallpaper showing through. Only the tab bar moves: the heading at the top stays put and the cards make room. It can only go down into the dashboard's margin."),
                 keep_menu_open = true,
                 callback = function(touchmenu_instance)
                     local Ak = kit()
