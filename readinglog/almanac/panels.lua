@@ -72,6 +72,18 @@ local function card(env, s)
     }
 end
 
+-- Over a Simple UI wallpaper (the Dashboard's page left clear, see
+-- modules.lua), text that sits straight on the page gets a plate behind it
+-- in the page colour, framed like the tab bar, so it stays readable on any
+-- wallpaper. Without a wallpaper nothing changes. Returns the padding to
+-- inset the text by. From Reading Log for Simple UI 1.2.0 (stevenzamora1).
+local function platePad(px) return px(26), px(18) end
+local function plate(c, x, y, w, h, px)
+    local bg, fg = A.dashPage()
+    local r = max(6, floor(min(h * 0.3, px(32))))
+    c:frame(x, y, w, h, r, max(2, round(px(3))), fg, bg)
+end
+
 -- Two centred lines for a card with nothing to show yet.
 local function emptyState(env, c, s, heading, line1, line2)
     local _, fpx = scaler(s, env.ts)
@@ -165,6 +177,9 @@ function P.banner.heading(env)
         fg, accent, muted = env.tone.fg, env.tone.accent, env.tone.muted
     end
     local pad = env.nested and 0 or px(36)
+    local see = env.nested and env.see
+    local plate_x, plate_y = 0, 0
+    if see then plate_x, plate_y = platePad(px); pad = plate_x end
     local now = os.time()
     local time_str, suffix = clockText(now)
     local kicker = A.date("%A", now) .. "  \xE2\x80\xA2  " .. tonumber(os.date("%d", now)) .. " " .. A.date("%B", now)
@@ -174,6 +189,13 @@ function P.banner.heading(env)
     local tight = round(t_t.h * 0.14)
     local block = t_k.h + t_t.h - tight
     local y = floor((h - block) / 2)
+    local line1, line2 = env.cfg("line1", ""), env.cfg("line2", "")
+    if see then
+        local left_w = max(t_k.w, t_t.w + (t_suf and (t_suf.w + px(10)) or 0))
+        local pw = (line1 ~= "" or line2 ~= "") and w or min(w, left_w + 2 * plate_x)
+        local ph = min(h, block + 2 * plate_y)
+        plate(c, 0, floor((h - ph) / 2), pw, ph, px)
+    end
     c:put(t_k, pad, y)
     local ty = y + t_k.h - tight
     c:put(t_t, pad - round(t_t.px * 0.03), ty)
@@ -181,7 +203,6 @@ function P.banner.heading(env)
     local left_w = max(t_k.w, t_t.w + (t_suf and (t_suf.w + px(10)) or 0))
 
     -- your two lines, right-aligned, in the same small-over-big pattern
-    local line1, line2 = env.cfg("line1", ""), env.cfg("line2", "")
     local room = w - 2 * pad - left_w - px(48)
     if room > px(120) and (line1 ~= "" or line2 ~= "") then
         local t1 = line1 ~= "" and c:text(line1, fpx(24), { bold = true, caps = true, color = muted, max_w = room }) or nil
@@ -3028,13 +3049,20 @@ function P.heading(env, kicker, title, nav)
         btn.bs = bs
         room = x - px(24)
     end
+    local inset, inset_y = 0, 0
+    if env.see then inset, inset_y = platePad(px); room = room - 2 * inset end
     local t_k = kicker and c:text(kicker, fpx(24), { bold = true, caps = true, color = accent, max_w = room }) or nil
     local t_t = c:text(title, fpx(74), { bold = true, color = fg, max_w = room })
     local tight = round(t_t.h * 0.14)
     local total = (t_k and t_k.h or 0) + t_t.h - tight
     local y = floor((h - total) / 2)
-    if t_k then c:put(t_k, 0, y); y = y + t_k.h - tight end
-    c:put(t_t, -round(t_t.px * 0.03), y)
+    if env.see then
+        local pw = max(t_k and t_k.w or 0, t_t.w) + 2 * inset
+        local ph = min(h, total + 2 * inset_y)
+        plate(c, 0, floor((h - ph) / 2), pw, ph, px)
+    end
+    if t_k then c:put(t_k, inset, y); y = y + t_k.h - tight end
+    c:put(t_t, inset - round(t_t.px * 0.03), y)
     if nav then
         local bs = btn.bs
         local by = floor((h - bs) / 2)
