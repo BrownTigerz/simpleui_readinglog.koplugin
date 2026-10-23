@@ -1,6 +1,8 @@
--- Reading Log for SimpleUI v1.7.0, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.7.1, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
+-- Built for Simple UI by Doctor Hetfield
+-- (https://github.com/doctorhetfield-cmd/simpleui.koplugin) — thank you!
 -- Full license text: see LICENSE in this folder.
 --[[
 Reading Log for SimpleUI
@@ -14,7 +16,7 @@ options. This file is the layer around it:
   * builds, taps and repaints them in place (one card, not the whole page)
   * keeps every setting in settings/simpleui_readinglog.lua
   * adds this plugin's own options: Night Mode Theme, Layout (Full Screen),
-    Bottom Space, Size, Height, Flash To Clear Ghosting, Reading Goals,
+    Bottom Space, Tab Bar Position, Size, Height, Flash To Clear Ghosting, Reading Goals,
     Today Page Card, Start On First Page, and the Year Goal With Covers card
 ]]
 
@@ -1027,12 +1029,41 @@ dropDash = function(inst)
     end
 end
 
+-- Whether Simple UI's wallpaper shows through the dashboard (see
+-- H.seeThrough), with a diagnostics line whenever what decides it changes.
+local _last_see = {}
+local function seeThrough(inst)
+    local Ak = A
+    local pfx = type(inst.sctx) == "table" and inst.sctx.pfx or "simpleui_hs_"
+    local ok, see = pcall(Ak.host.seeThrough, pfx, inst.id)
+    see = ok and see or false
+    local wp_on, strength = "?", "?"
+    local okw, WP = pcall(require, "features/sui_wallpaper")
+    if okw and type(WP) == "table" then
+        local o1, v1 = pcall(WP.isWallpaperActive); wp_on = o1 and tostring(v1) or "error"
+        local o2, v2 = pcall(WP.getModuleBackdropStrength, pfx, inst.id); strength = o2 and tostring(v2) or "error"
+    end
+    local line = string.format("wallpaper %s, Background Opacity %s -> %s | theme %s (own page colour %s) | night %s",
+        wp_on, strength, see and "page left clear (cards solid, titles on plates)" or "page painted",
+        tostring(Ak.themeId()), Ak.theme().page and "yes" or "no", Screen.night_mode and "on" or "off")
+    if _last_see[inst.id] ~= line then
+        _last_see[inst.id] = line
+        diag("%s: %s", inst.id, line)
+    end
+    return see
+end
+
 local function dashKey(inst, w, h)
     local Ak = A
+    -- Simple UI's side of the look too (its background colour, the
+    -- wallpaper showing through): changing them in its menus draws the tab
+    -- again instead of reusing a kept one.
+    local bg = Ak.pageColors()
     return table.concat({
         floor(w), floor(h), tostring(Ak.state.dash_page or 1), tostring(Ak.epoch or 0),
         tostring(Ak.themeId()), Screen.night_mode and "n" or "d", tostring(Ak.state.month_offset or 0),
         os.date("%Y-%m-%d"), tostring(Ak.textSizePct(nil, inst.id)),
+        bg[1] .. "." .. bg[2] .. "." .. bg[3], seeThrough(inst) and "see" or "solid",
     }, "|")
 end
 
@@ -1417,6 +1448,41 @@ local function makeModule(inst, title)
                     end,
                 }
             end
+            -- Tab bar: pixels up (-) or down (+) from where it sits by default.
+            -- Kept in the kit's settings (it lays the dashboard out); setting
+            -- it there also draws the dashboard fresh.
+            table.insert(appearance, 1, {
+                text_func = function()
+                    local Ak = kit()
+                    local adj = Ak and tonumber(Ak.get("tabs_adjust", 0)) or 0
+                    return _("Tab Bar Position: ") .. (adj == 0 and _("Default")
+                        or ((adj > 0 and "+" or "") .. adj .. " px"))
+                end,
+                help_text = _("Moves the Today / Monthly / Yearly tab bar up (-) or down (+) from where it normally sits. Handy with a wallpaper showing through. Moving it up makes the cards above it shorter; it can only go down into the dashboard's margin."),
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    local Ak = kit()
+                    if not Ak then return end
+                    local SpinWidget = require("ui/widget/spinwidget")
+                    UIManager:show(SpinWidget:new{
+                        title_text = _("Tab Bar Position"),
+                        info_text = _("Pixels up (-) or down (+) from the default (0)."),
+                        value = tonumber(Ak.get("tabs_adjust", 0)) or 0,
+                        value_min = -300, value_max = 100,
+                        value_step = 2, value_hold_step = 10,
+                        default_value = 0,
+                        unit = "px",
+                        ok_text = _("Save"),
+                        callback = function(spin)
+                            Ak.set("tabs_adjust", spin.value ~= 0 and spin.value or nil)
+                            if touchmenu_instance and touchmenu_instance.updateItems then
+                                touchmenu_instance:updateItems()
+                            end
+                            done()
+                        end,
+                    })
+                end,
+            })
             table.insert(appearance, 1, {
                 text_func = function()
                     local adj = tonumber(sget("dash_bottom_adjust", 0)) or 0
