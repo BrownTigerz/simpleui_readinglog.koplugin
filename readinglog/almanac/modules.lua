@@ -472,13 +472,15 @@ local function buildDashboard(ctx, w, h)
 
     -- tab bar
     local body_h = h
+    local head_from = h -- what the heading's size comes from (not the tab bar's position)
+    local adj = 0
     if #tabs > 1 then
         local bar_h = A.clamp(floor(h * 0.056 + 0.5), 40, 110)
         local bar_w = min(w, max(floor(w * 0.72), #tabs * floor(bar_h * 2.3)))
         local bx, by = ox + floor((w - bar_w) / 2), oy + h - bar_h
         -- Tab Bar Position: up (-) or down (+) by that many pixels. Down only
         -- into the margin below; up leaves the cards at least half the room.
-        local adj = tonumber(A.get("tabs_adjust", 0)) or 0
+        adj = tonumber(A.get("tabs_adjust", 0)) or 0
         if adj ~= 0 then
             by = A.clamp(by + floor(adj), oy + floor(h * 0.5), oy + h + m - bar_h)
         end
@@ -502,7 +504,9 @@ local function buildDashboard(ctx, w, h)
             c:put(t_tab, cx, by + bar_h / 2, "c", "mid")
             c:region("tab:" .. i, cx - cell / 2, by, cell, bar_h)
         end
-        body_h = min(h - bar_h - gap, by - oy - gap)
+        head_from = h - bar_h - gap
+        body_h = min(head_from, by - oy - gap)
+        c.layout = { tabs_y = by, tabs_h = bar_h, moved = by - (oy + h - bar_h) }
     end
 
     -- Short, wide cell (the hero area): there is not room for a whole page,
@@ -520,7 +524,9 @@ local function buildDashboard(ctx, w, h)
 
     local y = 0
     if heading then
-        local head_h = floor(body_h * 0.105)
+        -- sized from the dashboard's height, so moving the tab bar leaves the
+        -- heading where and how it is (only the cards make room)
+        local head_h = floor(head_from * 0.105)
         local kicker, nav
         local refresh = ctx.refresh
         local st = D.stats(refresh)
@@ -551,8 +557,12 @@ local function buildDashboard(ctx, w, h)
         local env = { w = w, h = head_h, ts = ts, see = see }
         local ok, hc = pcall(P.heading, env, kicker, pageLabel(page), nav)
         if ok and hc then c:sub(hc, ox, oy + y, "heading|") end
+        c.layout = c.layout or {}
+        c.layout.head_y, c.layout.head_h = oy + y, head_h
         y = y + head_h + floor(gap * 0.6)
     end
+    c.layout = c.layout or {}
+    c.layout.cards_y, c.layout.cards_bottom = oy + y, oy + body_h
 
     local total = 0
     for _, row in ipairs(rows) do total = total + rowWeight(row) end
