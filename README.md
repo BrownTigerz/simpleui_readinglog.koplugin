@@ -92,4 +92,3 @@ All of these are in Module Settings → Reading Log · Dashboard.
 - **[KOReader](https://github.com/koreader/koreader)** and its Reading statistics, where all the reading data comes from.
 - **TK:** the SimpleUI integration (`main.lua`), also AGPL-3.0: swipe cards, kept tabs, Start On Tab, the Black accent, Book Club in Reading Goals, the finish-date correction and the redraw and speed work.
 
-Full license text: `LICENSE`.
