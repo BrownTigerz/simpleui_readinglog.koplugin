@@ -70,7 +70,7 @@ All of these are in Module Settings → Reading Log · Dashboard.
 | **Quote Of The Day** | Where the quote comes from: **My Quote File** (default; a quote file in `koreader/settings/simpleui/sui_quotes/`, the same folder SimpleUI's Quote of the Day uses) or **My Highlights**. Pick which file underneath. |
 | **Appearance → Layout** | **In The Page** (default) sits in SimpleUI's page like any module. **Full Screen** fills everything between the status bar and the nav bar, so every card is bigger. |
 | **Appearance → Bottom Space** | Full Screen only. Room left under the dashboard for SimpleUI's page dots. **Auto** fits the dots; add or take away pixels to fine-tune. |
-| **Appearance → Tab Bar Position** | Moves the Today / Monthly / Yearly tab bar up (-) or down (+) by pixels from where it normally sits, e.g. to line it up over a wallpaper. Moving it up makes the cards above it shorter; it can only go down into the dashboard's margin. |
+| **Appearance → Tab Bar Position** | Moves the Today / Monthly / Yearly tab bar up (-) or down (+) by pixels from where it normally sits, e.g. to line it up over a wallpaper. Only the tab bar moves: the date, time and page title at the top stay where they are and the same size, and the cards make room. It can only go down into the dashboard's margin. |
 | **Appearance → Size** | Scales the text. Small labels scale fully, big numbers and titles at half strength. Rings, charts and covers follow the card's size, so use Height for those. |
 | **Appearance → Height (% Of Screen)** | How much of the page the dashboard fills. |
 | **Appearance → Night Mode Theme** | The theme used while night mode is on: Dark (default), Paper, White or Same As Day. |
