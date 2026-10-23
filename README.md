@@ -2,6 +2,8 @@
 
 Runs [Reading Log](https://github.com/stevenzamora1/reading-log-simpleui) (by stevenzamora1, AGPL-3.0) as SimpleUI home screen modules, with extra layout, night mode and fine-tuning options. No Bookshelf needed.
 
+If this plugin is useful to you, you can [support my work on Ko-fi](https://ko-fi.com/browntigerz).
+
 ## Requirements
 - KOReader with [SimpleUI](https://github.com/doctorhetfield-cmd/simpleui.koplugin) installed and enabled.
 - KOReader's **Reading statistics** plugin switched on (it is by default). Every number on the dashboard comes from it.
