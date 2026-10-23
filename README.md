@@ -68,6 +68,7 @@ All of these are in Module Settings → Reading Log · Dashboard.
 | **Quote Of The Day** | Where the quote comes from: **My Quote File** (default; a quote file in `koreader/settings/simpleui/sui_quotes/`, the same folder SimpleUI's Quote of the Day uses) or **My Highlights**. Pick which file underneath. |
 | **Appearance → Layout** | **In The Page** (default) sits in SimpleUI's page like any module. **Full Screen** fills everything between the status bar and the nav bar, so every card is bigger. |
 | **Appearance → Bottom Space** | Full Screen only. Room left under the dashboard for SimpleUI's page dots. **Auto** fits the dots; add or take away pixels to fine-tune. |
+| **Appearance → Tab Bar Position** | Moves the Today / Monthly / Yearly tab bar up (-) or down (+) by pixels from where it normally sits, e.g. to line it up over a wallpaper. Moving it up makes the cards above it shorter; it can only go down into the dashboard's margin. |
 | **Appearance → Size** | Scales the text. Small labels scale fully, big numbers and titles at half strength. Rings, charts and covers follow the card's size, so use Height for those. |
 | **Appearance → Height (% Of Screen)** | How much of the page the dashboard fills. |
 | **Appearance → Night Mode Theme** | The theme used while night mode is on: Dark (default), Paper, White or Same As Day. |
@@ -77,6 +78,7 @@ All of these are in Module Settings → Reading Log · Dashboard.
 | **Start On First Page After Reading Or Sleep** | Opening a book or putting the device to sleep sends the home screen back to page 1. |
 
 ## Notes
+- **Wallpaper:** with a SimpleUI wallpaper on, the dashboard follows its **Background Opacity** (long-press → Background). Below Solid, the dashboard's page is left clear so the wallpaper shows around and between the cards; the cards and the tab bar stay solid so they stay readable, and the date, time and page titles at the top get a framed plate behind them. At Solid it looks as before. (From Steven's Reading Log for Simple UI 1.2.0.)
 - **Book Details:** "Details" on a book opens SimpleUI's own book menu (mark finished or on hold, collections, book info…).
 - **Finish dates:** reopening a finished book for a moment can make KOReader mark it finished again with today's date. Reading Log ignores that and uses the last day of real reading (at least 1 minute or 2 pages), so Longest Reads, the monthly lists and Year In Covers stay correct. If Bookshelf is also installed, its own Reading goals card still uses KOReader's date and may count that book in the wrong month.
 - **Swipe cards:** swipe left or right on the card, or tap the dots under it, to switch. Only that card redraws. A swipe anywhere else still turns SimpleUI pages, so start page-turn swipes off the card.
@@ -85,4 +87,9 @@ All of these are in Module Settings → Reading Log · Dashboard.
 - **Quote files:** Lua files returning `{ { q = "Quote", a = "Author", b = "Book (optional)" }, ... }`, like `Quotes.lua` from [KOReader patches](https://github.com/BrownTigerz/-KOReader.patches). "Another" on the card shows the next one; one quote a day otherwise.
 
 ## Credits
-The Reading Log kit (`readinglog/almanac/`) is [Reading Log for Simple UI](https://github.com/stevenzamora1/reading-log-simpleui) by stevenzamora1 (AGPL-3.0), from [Reading Log](https://github.com/stevenzamora1/reading-log). Thank you! The SimpleUI integration (`main.lua`) is new work by TK, also AGPL-3.0. Full license text: `LICENSE`.
+- **[Simple UI](https://github.com/doctorhetfield-cmd/simpleui.koplugin)** by Doctor Hetfield: the home screen this plugin lives in. Reading Log uses its module system, wallpaper and Background Opacity, book menu, cover cache, Reading goals and quote file folder. Thank you!
+- **[Reading Log for Simple UI](https://github.com/stevenzamora1/reading-log-simpleui)** by stevenzamora1 (AGPL-3.0), from his [Reading Log](https://github.com/stevenzamora1/reading-log): the Reading Log kit (`readinglog/almanac/`), all the cards, themes and the dashboard. The wallpaper support (page left clear below Solid, plates behind the titles) comes from his version 1.2.0. Thank you!
+- **[KOReader](https://github.com/koreader/koreader)** and its Reading statistics, where all the reading data comes from.
+- **TK:** the SimpleUI integration (`main.lua`), also AGPL-3.0: swipe cards, kept tabs, Start On Tab, the Black accent, Book Club in Reading Goals, the finish-date correction and the redraw and speed work.
+
+Full license text: `LICENSE`.
