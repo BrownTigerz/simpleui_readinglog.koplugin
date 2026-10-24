@@ -416,6 +416,10 @@ function S.lookMenu(mctx)
                         return A.ACCENTS[v] and v or "matched"
                     end,
                     function(v) A.set("accent2", v ~= "matched" and v or nil) end, after),
+                radioItem("Progress style", function() return A.PROGRESS_STYLES end, A.progressStyle,
+                    function(v) A.set("progress_style", v ~= "rings" and v or nil) end, after),
+                radioItem("Chart style", function() return A.CHART_STYLES end, A.chartStyle,
+                    function(v) A.set("chart_style", v ~= "bars" and v or nil) end, after),
                 radioItem("Cards on their own",
                     function() return { { "native", "Match Simple UI" }, { "framed", "Framed, in the theme" } } end,
                     function() return A.standaloneNative() and "native" or "framed" end,

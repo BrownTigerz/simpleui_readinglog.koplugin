@@ -58,18 +58,21 @@ end
 local function card(env, s)
     local radius = max(4, round(32 * s))
     radius = min(radius, floor(min(env.w, env.h) / 4))
+    local c
     if env.native then
         -- The page is the card: nothing drawn under the content,
         -- or a soft frameless panel for the tinted styles.
-        return A.canvas{ w = env.w, h = env.h, tone = env.tone, radius = radius,
+        c = A.canvas{ w = env.w, h = env.h, tone = env.tone, radius = radius,
             plain = not env.tone.panel, bleed = env.bleed }
+    else
+        c = A.canvas{
+            w = env.w, h = env.h, tone = env.tone, radius = radius,
+            border_w = env.tone.border and (env.tone.border_thin and max(1, round(2 * s)) or max(2, round(4 * s))) or 0,
+            bleed = env.bleed and not env.nested,
+            page = env.page,
+        }
     end
-    return A.canvas{
-        w = env.w, h = env.h, tone = env.tone, radius = radius,
-        border_w = env.tone.border and (env.tone.border_thin and max(1, round(2 * s)) or max(2, round(4 * s))) or 0,
-        bleed = env.bleed and not env.nested,
-        page = env.page,
-    }
+    return c
 end
 
 -- Over a Simple UI wallpaper (the Dashboard's page left clear, see
@@ -82,6 +85,31 @@ local function plate(c, x, y, w, h, px)
     local bg, fg = A.dashPage()
     local r = max(6, floor(min(h * 0.3, px(32))))
     c:frame(x, y, w, h, r, max(2, round(px(3))), fg, bg)
+end
+
+-- One value of a chart in Look and colours > Chart style: a bar (rounded on
+-- top; `flat` squares the foot), a dot on a thin stem, or a dot for a line
+-- through them (`pts` collects the points; drawn with lineThrough).
+local function styledBar(c, tone, px, cx, base, bh, bar_w, r, col, flat, pts)
+    local style = A.chartStyle()
+    if style == "bars" then
+        local bx = floor(cx - bar_w / 2)
+        c:rrect(bx, base - bh, bar_w, bh, r, col, tone.bg)
+        if flat and bh > r and r > 0 then c:rect(bx, base - r, bar_w, r, col) end
+        return
+    end
+    local dot = max(2, min(floor(bar_w / 2), px(9)))
+    if style == "stems" then
+        local sw = max(2, px(3))
+        c:rect(floor(cx - sw / 2), base - bh, sw, bh, A.mix(tone.bg, col, 0.6))
+    elseif pts then
+        pts[#pts + 1] = cx
+        pts[#pts + 1] = base - bh
+    end
+    c:disc(cx, base - bh, dot, col)
+end
+local function lineThrough(c, tone, px, pts)
+    if A.chartStyle() == "line" and pts and #pts >= 4 then c:polyline(pts, max(2, px(3)), tone.accent2) end
 end
 
 -- Two centred lines for a card with nothing to show yet.
@@ -1231,18 +1259,19 @@ function P.week.build(env)
         local d = week[i]
         if d then top_v = max(top_v, by_minutes and d.secs or d.pages) end
     end
+    local pts = {}
     for i = 1, 7 do
         local d = week[i] or { pages = 0, secs = 0, wday = ((D.weekStart() + i - 2) % 7) + 1, future = true }
         local v = by_minutes and d.secs or d.pages
         local cx = pad + (i - 1) * col_w + col_w / 2
-        local x = floor(cx - bar_w / 2)
         local bh = v > 0 and max(bar_w, round(area * v / top_v)) or max(3, px(6))
         bh = min(bh, area)
         local col = v <= 0 and tone.track or (d.today and tone.accent or tone.accent2)
-        c:rrect(x, base_y - bh, bar_w, bh, min(bar_w / 2, px(10)), col)
+        styledBar(c, tone, px, cx, base_y, bh, bar_w, min(bar_w / 2, px(10)), col, false, pts)
         c:label(DAY_LETTERS[d.wday] or "", fpx(20), cx, base_y + px(8),
             { anchor = "c", bold = true, color = d.today and tone.accent or tone.label })
     end
+    lineThrough(c, tone, px, pts)
     return c
 end
 
@@ -2536,6 +2565,21 @@ local function barChart(c, tone, s, ts, o)
     local radius = min(floor(bar_w / 2), px(6))
     local base = floor(plot_bottom + 0.5) - floor(grid_w / 2)
     local stub = max(2, px(4))
+    -- Look and colours > Chart style: a line through the tops, or dots on
+    -- thin stems, instead of bars
+    local style = A.chartStyle()
+    if style == "line" then
+        local pts = {}
+        for i = 1, n do
+            local v = o.values[i]
+            if v then
+                local bh = (v > 0) and max(stub, round(ph * min(1, v / top))) or 0
+                pts[#pts + 1] = x0 + (i - 0.5) * col_w
+                pts[#pts + 1] = base - bh
+            end
+        end
+        if #pts >= 4 then c:polyline(pts, max(2, px(4)), tone.accent2) end
+    end
     for i = 1, n do
         local cx = x0 + (i - 0.5) * col_w
         local bx = floor(cx - bar_w / 2)
@@ -2543,12 +2587,22 @@ local function barChart(c, tone, s, ts, o)
         local is_cur = (i == o.current)
         if v then
             local bh = (v > 0) and max(stub, round(ph * min(1, v / top))) or 0
+            local col = is_cur and tone.accent or tone.accent2
+            local dot_r = max(2, min(floor(bar_w / 2), px(9)))
+            if style == "line" then
+                c:disc(cx, base - bh, is_cur and dot_r * 1.25 or dot_r * 0.8, col)
+            elseif style == "stems" and bh > 0 then
+                local sw = max(2, px(3))
+                c:rect(floor(cx - sw / 2), base - bh, sw, bh, A.mix(tone.bg, col, 0.6))
+                c:disc(cx, base - bh, is_cur and dot_r * 1.2 or dot_r, col)
+            end
             if bh > 0 then
-                local col = is_cur and tone.accent or tone.accent2
                 -- rounded on top, square where it stands on the axis
                 local r = min(radius, floor(bh / 2))
-                c:rrect(bx, base - bh, bar_w, bh, r, col, tone.bg)
-                if bh > r and r > 0 then c:rect(bx, base - r, bar_w, r, col) end
+                if style == "bars" then
+                    c:rrect(bx, base - bh, bar_w, bh, r, col, tone.bg)
+                    if bh > r and r > 0 then c:rect(bx, base - r, bar_w, r, col) end
+                end
                 if is_cur and o.mark then
                     -- Just over the bar. The figure is wider than a bar, so it
                     -- is slid sideways (centred, or starting at the bar's left
@@ -2989,22 +3043,25 @@ function P.when_read.build(env)
         local top_v = 0
         for hr = 0, 23 do top_v = max(top_v, hours[hr]) end
         c:rect(pad, plot_bottom, w - 2 * pad, max(1, px(2)), A.mix(tone.track, tone.fg, 0.35))
+        local pts = {}
         for hr = 0, 23 do
             local cx = pad + (hr + 0.5) * col_w
             local v = hours[hr]
             if v > 0 then
                 local bh = max(max(2, px(4)), round(ph * v / top_v))
                 local col = partOf(hr) == peak_part and tone.accent or tone.accent2
-                local bx = floor(cx - bar_w / 2)
                 local r = min(radius, floor(bh / 2))
-                c:rrect(bx, plot_bottom - bh, bar_w, bh, r, col, tone.bg)
-                if bh > r and r > 0 then c:rect(bx, plot_bottom - r, bar_w, r, col) end
+                styledBar(c, tone, px, cx, plot_bottom, bh, bar_w, r, col, true, pts)
+            elseif A.chartStyle() == "line" then
+                pts[#pts + 1] = cx
+                pts[#pts + 1] = plot_bottom
             end
             if hr % 6 == 0 then
                 c:label(hourName(hr, true), fpx(18), pad + hr * col_w, plot_bottom + px(6),
                     { bold = true, color = tone.label })
             end
         end
+        lineThrough(c, tone, px, pts)
     end
     if show_parts then
         local cw = (w - 2 * pad) / 4
