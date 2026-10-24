@@ -84,7 +84,7 @@ With SimpleUI 3.0's **Tiny Critter**, the critter peeks into every Dashboard pag
 | Page | It talks about |
 | --- | --- |
 | **Today** | Your daily goal (done, or how much is left), your best reading day this month, a first reading day after a break or a few days in a row since, a day well above your usual, a streak that needs a page today or is close to your best, the book closest to done (and the time left in it), this week against last week |
-| **Yearly** | Ahead of or behind your goal pace, how many books this month would put you on pace, a milestone (book 5, 10, 25, 50, 75, 100 this year), where the year is heading at this rate, your best month so far, a month beating every other this year, goal reached |
+| **Yearly** | Ahead of or behind your goal pace, the finish rate your goal needs ("one every 3 days"), a milestone (book 5, 10, 25, 50, 75, 100 this year), where the year is heading at this rate, your best month so far, a month beating every other this year, goal reached |
 | **Monthly** | Books finished this month, how many more would put you on your yearly pace, your best day this month, already past last month, pages to an average month, the last days of the month and the book you could finish in them |
 | **Trends** | Your streak against your best, getting back into the habit, whether you read more on weekends or weekdays, the hour you read most, this week against last, your pages and minutes a day lately |
 | **Library** | Unread books waiting, unread books by authors you've finished, how much of your library you've read, books on the go at once, books on hold, the next one to finish |
@@ -112,7 +112,16 @@ With **ReadMastery** and its Quests patch (1.0.6+, Quests (Enhanced) on) it blen
 
 The book each suggestion picks stays the same all day, and changes the next. A book you pass on with **Another Suggestion** isn't suggested again that day.
 
-The insights only come up when your stats back them: a comeback needs 4+ quiet days before it, your best day this month needs 20+ minutes, a week of the month gone and 5 other reading days, and the weekend pattern needs 12+ reading days in the last 8 weeks and a clear difference. The big news of the day (daily goal done, a milestone, your best day, a record streak, a comeback, the next in a series you just finished) comes first, once a day on each page.
+The insights only come up when your stats back them:
+
+- **Best day this month** is in minutes read: 20+ minutes, a week into the month, and more than each of 5+ earlier reading days this month.
+- **Comeback / back on a roll:** 4+ quiet days before it. It comes first once per comeback; after that it's an ordinary remark.
+- **Milestones** (book 5, 10, 25, 50, 75, 100 this year) go by the date the book was finished: first on that day, then an ordinary remark for 3 days.
+- **Goal pace** (Yearly, from mid-January): books left over days left ("20 books to go, 69 days left. About one every 3 days catches you up."), worded for on pace or catching up. Monthly keeps "2 more books this month would put you on pace".
+- **Weekend reader** needs 4+ weekend and 8+ weekday reading days in the last 8 weeks and a clear difference, and the verdict sticks until the difference is mostly gone, so it doesn't flip every week.
+- **Quiet days:** passing on that nudge (Another Suggestion) keeps it away for the rest of that quiet stretch.
+
+The big news of the day (daily goal done, a milestone, your best day, a record streak, a comeback, the next in a series you just finished) comes first, once a day on each page.
 
 - It sits in the free part of a page's title row, and wanders: right after the title, the middle or the far end, a different spot each day (and on each page), and a new one each time you tap it. It never fills the whole row. On Monthly the month arrows leave it less room.
 - **Today:** the Banner (day and clock) is that page's title row, so the critter wanders in the room to the right of the clock. It needs the Banner's **Heading** style (the default) with its two lines of your own left empty. If you've filled those lines in, turn on Today's own title (Pages and cards → Today → **Title on the page**) and it wanders there instead. It never takes a row of its own.
