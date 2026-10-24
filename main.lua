@@ -1080,6 +1080,7 @@ local function dashKey(inst, w, h)
         os.date("%Y-%m-%d"), tostring(Ak.textSizePct(nil, inst.id)),
         bg[1] .. "." .. bg[2] .. "." .. bg[3], seeThrough(inst) and "see" or "solid",
         tostring(Ak.state.critter_rev or 0), -- tapping the critter: a new remark
+        tostring(Ak.state.tap_rev or 0), -- in-card taps (Continue Reading 1/2, Another pick/quote): redraw
     }, "|")
 end
 
