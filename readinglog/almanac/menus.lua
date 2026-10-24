@@ -420,6 +420,40 @@ function S.lookMenu(mctx)
                     function(v) A.set("progress_style", v ~= "rings" and v or nil) end, after),
                 radioItem("Chart style", function() return A.CHART_STYLES end, A.chartStyle,
                     function(v) A.set("chart_style", v ~= "bars" and v or nil) end, after),
+                {
+                    text = "Card looks" .. ELLIPSIS,
+                    help_text = "Pictures instead of a card's usual chart: a constellation or your critter on a trail for the Year goal, an hourglass for the Monthly challenge, weather for This week, tree rings for Time read by month, a campfire for the streak. Or a set: Night sky or Trail.",
+                    sub_item_table_func = function()
+                        local items = {}
+                        for _, set in ipairs(A.LOOK_SETS) do
+                            items[#items + 1] = {
+                                text = "Set: " .. set[2],
+                                keep_menu_open = true,
+                                callback = function()
+                                    for k, v in pairs(set[3]) do A.set(k, v) end
+                                    after()
+                                end,
+                            }
+                        end
+                        items[#items + 1] = {
+                            text = "Set: Everything back to normal",
+                            keep_menu_open = true,
+                            separator = true,
+                            callback = function()
+                                for _, id in ipairs(A.LOOK_ORDER) do A.set("look_" .. id, nil) end
+                                A.set("progress_style", nil)
+                                after()
+                            end,
+                        }
+                        for _, id in ipairs(A.LOOK_ORDER) do
+                            local def = A.LOOKS[id]
+                            items[#items + 1] = radioItem(def.label, function() return def.options end,
+                                function() return A.look(id) end,
+                                function(v) A.set("look_" .. id, v ~= def.options[1][1] and v or nil) end, after)
+                        end
+                        return items
+                    end,
+                },
                 radioItem("Cards on their own",
                     function() return { { "native", "Match Simple UI" }, { "framed", "Framed, in the theme" } } end,
                     function() return A.standaloneNative() and "native" or "framed" end,
