@@ -1147,6 +1147,152 @@ TIERS.s_quick = { grumpy = { mood = "grumpy", text = function(f) return string.f
 TIERS.s_recover = { grumpy = { mood = "grumpy", text = function(f) return string.format("%s. Not that I'm counting.", n_(f.sug.recover.days, "day", "days")) end,
                                sub = function(f) return string.format("%s would cheer me up. %s", q(f.sug.recover.book.title), TAP) end } }
 
+-- ─── the shared phrase bank ─────────────────────────────────────────────────
+-- koreader/patches/critter-phrases.lua (SimpleUI Tweaks' file; edit it there),
+-- else the copy that comes with Reading Log. Its lines join each remark's
+-- wordings on the tab where the remark lives (Today: record day, back on a
+-- roll, a book nearly done, a quiet stretch; Year: milestones, goal pace;
+-- Trends: weekends). Its minutes and pages steps make Today's pep talk.
+-- Loaded once, with only string and math in reach; missing or broken, the
+-- built-in lines stay.
+local BANK_MAP = {
+    tw_milestone = { id = "y_milestone", d = function(f) return { days = f.milestone } end },
+    tw_record    = { id = "t_day_record", d = function(f) return { minutes = mins(f.today_secs) } end },
+    tw_momentum  = { id = "t_momentum", d = function(f) return { days = f.run } end },
+    tw_pace      = { id = "y_pace", d = function(f)
+                         return { days = f.pace.left, minutes = f.pace.days_left, years = f.year_goal,
+                                  which = f.pace.on and "on" or "behind" } end },
+    tw_weekend   = { id = "r_weekend", d = function(f) return { which = f.weekend } end },
+    tw_quickwin  = { id = "s_quick", tap = true,
+                     d = function(f) return { title = f.sug.quick.book.title, minutes = f.sug.quick.left } end },
+    tw_recovery  = { id = "s_recover", tap = true,
+                     d = function(f) return { title = f.sug.recover.book.title, days = f.sug.recover.days } end },
+}
+local PEP_OWN = {
+    minutes = {
+        { upto = 4, mood = "curious", text = function(m) return n_(m, "minute", "minutes") .. " read today." end,
+          subs = { "A start is a start.", "Tiny reads still count." } },
+        { upto = 29, mood = "happy", text = function(m) return string.format("%d minutes read today.", m) end,
+          subs = { "Warming up nicely.", "Now that's a groove." } },
+        { upto = 59, mood = "cheer", text = function(m) return string.format("%d minutes read today!", m) end,
+          subs = { "A real session. Nice.", "Look at you go." } },
+        { upto = math.huge, mood = "party", text = function(m) return string.format("%.1f hours read today!", m / 60) end,
+          subs = { "Marathon mode.", "Okay, bookworm." } },
+    },
+    pages = {
+        { upto = 19, mood = "happy", text = function(p) return n_(p, "page", "pages") .. " turned today." end,
+          subs = { "Every page counts.", "One page at a time." } },
+        { upto = math.huge, mood = "party", text = function(p) return string.format("%d pages turned today!", p) end,
+          subs = { "That's a chunk of book.", "Your thumb needs a rest." } },
+    },
+}
+local bank, bank_tried
+local function stepsOk(st)
+    if type(st) ~= "table" or #st == 0 then return false end
+    local prev = 0
+    for _, x in ipairs(st) do
+        if type(x) ~= "table" or type(x.upto) ~= "number" or x.upto <= prev or type(x.text) ~= "function"
+            or type(x.subs) ~= "table" or #x.subs == 0 then return false end
+        prev = x.upto
+    end
+    return prev == math.huge
+end
+local function loadBank()
+    if bank_tried then return bank end
+    bank_tried = true
+    local paths = {}
+    local ok_ds, DS = pcall(require, "datastorage")
+    if ok_ds and DS and DS.getDataDir then paths[1] = DS:getDataDir() .. "/patches/critter-phrases.lua" end
+    paths[#paths + 1] = A.dir .. "/critter-phrases.lua"
+    for _, path in ipairs(paths) do
+        local fn = loadfile(path)
+        if fn then
+            setfenv(fn, { string = string, math = math, tostring = tostring, tonumber = tonumber,
+                          type = type, ipairs = ipairs, pairs = pairs, select = select })
+            local ok, b = pcall(fn)
+            if ok and type(b) == "table" then
+                bank = { minutes = stepsOk(b.minutes) and b.minutes or nil, pages = stepsOk(b.pages) and b.pages or nil }
+                local n = 0
+                for kind, m in pairs(BANK_MAP) do
+                    local list = type(b.insights) == "table" and b.insights[kind]
+                    if type(list) == "table" then
+                        for _, l in ipairs(list) do
+                            if type(l) == "table" and type(l.text) == "function" and (l.sub == nil or type(l.sub) == "function") then
+                                local adapt, tap = m.d, m.tap
+                                VARIANTS[m.id] = VARIANTS[m.id] or {}
+                                table.insert(VARIANTS[m.id], {
+                                    mood = l.mood or "happy",
+                                    text = function(f) return l.text(adapt(f)) end,
+                                    sub = function(f)
+                                        local sv = l.sub and l.sub(adapt(f)) or nil
+                                        if tap then return sv and (sv .. " " .. TAP) or TAP end
+                                        return sv
+                                    end })
+                                n = n + 1
+                            end
+                        end
+                    end
+                end
+                A.log("critter: phrase bank", path, n, "lines, pep",
+                    bank.minutes and "yes" or "built-in")
+                return bank
+            end
+            A.log("critter: phrase bank failed", path, tostring(b))
+        end
+    end
+    A.log("critter: no phrase bank, built-in lines")
+    return nil
+end
+
+-- Today's pep talk: minutes (or pages) read today, a step up as the day
+-- grows; within 10 minutes of the daily goal it counts you in. The step's
+-- wording turns with the day, the number stays live.
+local function pepSteps(kind)
+    local b = loadBank()
+    return (b and b[kind]) or PEP_OWN[kind]
+end
+local function pepStep(kind, v)
+    local steps = pepSteps(kind)
+    for i, st in ipairs(steps) do if v <= st.upto then return st, i end end
+end
+-- A step's line for today: a string, or { "line", mood = "..." } for a
+-- line with a mood of its own (a snack break looks hungry). Returns text, mood.
+local function pepSub(st, i)
+    local salt = (tonumber(os.date("%j")) or 1) + (A.state.critter_pep_turn or 0)
+    local sub = st.subs[(salt + i) % #st.subs + 1]
+    if type(sub) == "table" then return tostring(sub[1] or ""), sub.mood end
+    return sub, nil
+end
+local function pepMood(kind, v)
+    local st, i = pepStep(kind, v)
+    local _, mood = pepSub(st, i)
+    return mood or st.mood or "happy"
+end
+R.today[#R.today + 1] = { id = "t_pep",
+    mood = function(f)
+        local m = mins(f.today_secs)
+        if f.goal_min and m < f.goal_min and f.goal_min - m <= 10 then return "cheer" end
+        return pepMood("minutes", m)
+    end,
+    when = function(f) return (f.today_secs or 0) >= 60 end,
+    text = function(f)
+        local m = mins(f.today_secs)
+        local st = pepStep("minutes", m)
+        return st.text(m)
+    end,
+    sub = function(f)
+        local m = mins(f.today_secs)
+        if f.goal_min and m < f.goal_min and f.goal_min - m <= 10 then
+            return string.format("Just %s to your daily goal!", A.fmtMinutes(f.goal_min - m))
+        end
+        return (pepSub(pepStep("minutes", m)))
+    end }
+R.today[#R.today + 1] = { id = "t_pep_pages",
+    mood = function(f) return pepMood("pages", f.today_pages) end,
+    when = function(f) return (f.today_pages or 0) >= 1 end,
+    text = function(f) return pepStep("pages", f.today_pages).text(f.today_pages) end,
+    sub = function(f) return (pepSub(pepStep("pages", f.today_pages))) end }
+
 -- Pages the reader made: anything from the general pools.
 -- Remarks about a book in progress: tapping the bubble opens that book.
 local CLOSEST_FP = function(f) return f.closest and f.closest.fp or nil end
@@ -1208,7 +1354,8 @@ end
 
 -- The day's big news comes first: once a day each, before the dealt remarks.
 local FIRST = { "t_goal_done", "y_goal_done", "y_milestone", "t_day_record", "t_streak_best", "r_streak_best",
-                "t_comeback", "t_momentum", "s_series_next" }
+                "t_comeback", "t_momentum", "s_series_next",
+                "t_pep" } -- once you've read today, the pep talk; it grows as you read
 local FIRST_SET = {}
 for _, id in ipairs(FIRST) do FIRST_SET[id] = true end
 -- news only when it's new: a milestone on the day the book was finished, a
@@ -1269,13 +1416,20 @@ local function render(line, f)
         local ok_s, sv = pcall(line.sub, f)
         if ok_s and type(sv) == "string" and sv ~= "" then sub = sv end
     end
-    return { text = text, sub = sub, mood = line.mood }
+    local mood = line.mood
+    if type(mood) == "function" then
+        local ok_m, mv = pcall(mood, f)
+        mood = ok_m and type(mv) == "string" and mv or "happy"
+    end
+    return { text = text, sub = sub, mood = mood }
 end
 
 -- The remark for `page` now: { text, sub, mood }, or nil when nothing fits.
 local function remark(page, refresh, advance, want_book)
+    pcall(loadBank)
     local pool, kind = poolFor(page)
     local f = facts(refresh)
+    if advance then A.state.critter_pep_turn = (A.state.critter_pep_turn or 0) + 1 end
     local ids, by = eligible(pool, f)
     if want_book then
         -- only the remarks that suggest a book
@@ -1304,13 +1458,24 @@ local function remark(page, refresh, advance, want_book)
             if FIRST_DONE[first] then FIRST_DONE[first](f) end
         end
     end
+    local fresh = false
     if first then
         cur = { day = today, id = first, v = dealWording(kind, by[first]) }
         A.state.critter[kind] = cur
+        fresh = true
     elseif advance or not (cur and cur.day == today and by[cur.id]) then
         local id = deal(kind, ids, cur and cur.id)
         cur = { day = today, id = id, v = dealWording(kind, by[id]) }
         A.state.critter[kind] = cur
+        fresh = true
+    end
+    -- SimpleUI Tweaks' Critter Mix: a new remark here brings the next critter
+    if fresh then
+        local k = kit()
+        local As = k and k.Assets
+        if type(As) == "table" and As._tw_mix then
+            As.tw_turn = (tonumber(As.tw_turn) or tonumber(os.date("%j")) or 0) + 1
+        end
     end
     local r = by[cur.id]
     -- a critter in a strong mood says it its own way; else the dealt wording
@@ -1361,7 +1526,7 @@ local function pfx(ctx) return (ctx and ctx.pfx) or SUI_PREFIX end
 local function moodFor(k, mood)
     if k.Mood and type(k.Mood.read) == "function" and type(k.Mood.tier) == "function" then
         local ok, tier = pcall(function() return k.Mood.tier(k.Mood.read().score) end)
-        if ok and tier == "grumpy" and (mood == "party" or mood == "cheer" or mood == "love") then return "grumpy" end
+        if ok and tier == "grumpy" and (mood == "party" or mood == "cheer" or mood == "love" or mood == "proud") then return "grumpy" end
         if ok and tier == "meh" and mood == "party" then return "happy" end
     end
     return mood
@@ -1454,6 +1619,11 @@ local function fits(k, r, bw, h, scale, style, unit, mf, mb, df, db)
     return used <= h
 end
 
+-- Moods past SimpleUI's twelve (Donny and Blu have them), and the mood each
+-- falls back to for a critter that doesn't.
+C.MOOD_BASE = { reading = "neutral", proud = "cheer", hungry = "curious", cozy = "sleepy",
+                sipping = "happy", dreamy = "sleepy", festive = "happy", spooky = "surprised" }
+
 function C.draw(c, x, y, w, h, page, ctx, region, max_w)
     if not C.enabled() then return false end
     local area_x, area_w = x, w
@@ -1465,7 +1635,12 @@ function C.draw(c, x, y, w, h, page, ctx, region, max_w)
     local scale = h / Screen:scaleBySize(104)
     local entry = k.Assets.get(k.Store and k.Store:get(p .. "critter_pick") or nil)
     if not entry then return false end
-    local path = k.Assets.imagePath(entry, moodFor(k, r.mood) or "neutral")
+    local mood = moodFor(k, r.mood) or "neutral"
+    local path = k.Assets.imagePath(entry, mood)
+    -- a critter without the newer moods (reading, proud...): the pose they
+    -- were drawn from, not just neutral
+    local base = C.MOOD_BASE[mood]
+    if base and path and path == k.Assets.imagePath(entry, "neutral") then path = k.Assets.imagePath(entry, base) end
     if not path then return false end
     local cap = (max_w and max_w < w) and max_w or w
     local sprite = k.Sprite:new{ path = path, max_w = floor(cap * 0.3), max_h = h }
