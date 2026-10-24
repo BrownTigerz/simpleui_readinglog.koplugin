@@ -674,6 +674,28 @@ function Dashboard.keep_open(ctx)
     return false
 end
 
+-- A long-press on a card that has something of its own for it (Book Club:
+-- this month's picks). Returns true when handled; otherwise SimpleUI's own
+-- long-press (the module settings) goes ahead.
+local function holdPanel(name, sub, ctx, nested)
+    local def = P[name]
+    if not (def and def.hold) then return false end
+    local ok, res = pcall(def.hold, makeEnv(name, ctx, 0, 0, nested and { nested = true, slot = 1 } or nil), sub)
+    if not ok then A.log(name, "hold failed:", res) return false end
+    return res and true or false
+end
+A.holdPanel = holdPanel
+
+function A.onHold(name, ctx)
+    return holdPanel(name, tapRegion(P[name], ctx), ctx, false)
+end
+
+function Dashboard.on_hold(ctx)
+    local kind, a, b = dashSplit(dashRegion(ctx))
+    if kind ~= "panel" then return false end
+    return holdPanel(a, b, ctx, true)
+end
+
 function Dashboard.on_tap(ctx)
     local kind, a, b = dashSplit(dashRegion(ctx))
     if kind == "nav" and a == "critteropen" then
