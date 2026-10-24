@@ -53,6 +53,7 @@ function C.enabled() return A.get("critter_peek", true) ~= false and C.available
 -- ─── facts ───────────────────────────────────────────────────────────────────
 
 local function n_(n, one, many) return A.plural(n, one, many) end
+local suggestions, questFacts   -- below
 
 local function mins(secs) return floor((secs or 0) / 60 + 0.5) end
 
@@ -71,6 +72,146 @@ local MONTHS = { "January", "February", "March", "April", "May", "June", "July",
 local function hourText(hr)
     local h12 = hr % 12 == 0 and 12 or hr % 12
     return string.format("%d %s", h12, hr < 12 and "AM" or "PM")
+end
+
+-- ─── suggestions: books worth opening, worked out from the stats ─────────────
+-- From the library (finished books' authors, series and genres; books on
+-- hold; an unread pick) and from the books in progress (one that could be
+-- done tonight; how much sooner a little more a day would finish one).
+-- The library part is worked out once a day (and when the library changes);
+-- the book chosen for each stays the same all day.
+
+local function dayIndex(list, salt)
+    if #list == 0 then return nil end
+    local n = tonumber(os.date("%j")) or 1
+    for i = 1, #salt do n = n + salt:byte(i) end
+    return list[n % #list + 1]
+end
+
+local function tally(books, field)
+    local t, order = {}, {}
+    for _, b in ipairs(books) do
+        if b.status == "finished" then
+            for _, v in ipairs(b[field] or {}) do
+                local k = v:lower()
+                if not t[k] then t[k] = { name = v, n = 0 }; order[#order + 1] = k end
+                t[k].n = t[k].n + 1
+            end
+        end
+    end
+    local out = {}
+    for _, k in ipairs(order) do out[#out + 1] = t[k] end
+    table.sort(out, function(a, b) if a.n ~= b.n then return a.n > b.n end return a.name < b.name end)
+    return out
+end
+
+local function librarySuggestions(lib)
+    local books = lib.books or {}
+    local sug = {}
+    -- an author you finish, with a book of theirs not started yet
+    for _, a in ipairs(tally(books, "authors")) do
+        local cands = D.pickCandidates(books, { authors = { a.name } })
+        if #cands > 0 then
+            sug.author = { name = a.name, n = a.n, book = dayIndex(cands, "author" .. a.name) }
+            break
+        end
+    end
+    -- the next book of a series you've finished a book of
+    local done_series = {}
+    for _, b in ipairs(books) do
+        if b.status == "finished" and b.series then done_series[b.series:lower()] = b.series end
+    end
+    local next_in = {}
+    for _, c in ipairs(D.pickCandidates(books, {})) do
+        if c.series and done_series[c.series:lower()] then next_in[#next_in + 1] = c end
+    end
+    if #next_in > 0 then
+        local b = dayIndex(next_in, "series")
+        sug.series = { name = b.series, num = b.num, book = b }
+    end
+    -- a genre you finish, with a book in it not started yet
+    for _, g in ipairs(tally(books, "genres")) do
+        if g.n >= 2 then
+            local cands = D.pickCandidates(books, { genres = { g.name } })
+            if #cands > 0 then
+                sug.genre = { name = g.name, n = g.n, book = dayIndex(cands, "genre" .. g.name) }
+                break
+            end
+        end
+    end
+    -- a book on hold
+    local held = {}
+    for _, b in ipairs(books) do if b.status == "on_hold" then held[#held + 1] = b end end
+    if #held > 0 then
+        local b = dayIndex(held, "hold")
+        local pct = D.progress(b.fp)
+        sug.hold = { book = b, pct = tonumber(pct) }
+    end
+    -- anything not started yet
+    local any = D.pickCandidates(books, {})
+    if #any > 0 then sug.pick = { book = dayIndex(any, "pick") } end
+    return sug
+end
+
+suggestions = function(f)
+    if f.lib and f.lib.books then
+        local key = os.date("%Y-%m-%d") .. "|" .. f.lib.total .. "|" .. (f.lib.counts.finished or 0)
+            .. "|" .. (f.lib.counts.on_hold or 0)
+        local c = A.state.critter_sug
+        if not (c and c.key == key) then
+            local ok, v = pcall(librarySuggestions, f.lib)
+            c = { key = key, value = ok and v or {} }
+            A.state.critter_sug = c
+        end
+        f.sug = c.value
+    else
+        f.sug = {}
+    end
+    -- from the books in progress and your usual day
+    local avg_min = f.avg_secs and f.avg_secs / 60 or nil
+    for _, b in ipairs(f.reading or {}) do
+        if b.left_min and b.left_min > 0 and avg_min and avg_min >= 5 then
+            if not f.sug.tonight and b.left_min <= avg_min * 1.5 then
+                f.sug.tonight = { book = b, left = b.left_min, usual = avg_min }
+            end
+            if not f.sug.boost then
+                local now_days = math.ceil(b.left_min / avg_min)
+                local more_days = math.ceil(b.left_min / (avg_min + 10))
+                if now_days - more_days >= 2 then
+                    f.sug.boost = { book = b, now_days = now_days, more_days = more_days }
+                end
+            end
+        end
+    end
+end
+
+-- ReadMastery quests (ReadMastery Quests patch 1.0.6+, Quests (Enhanced) on):
+-- today's daily quests still open, and a "finish N books" quest one book short
+-- near the end of its week or month.
+questFacts = function(f)
+    local Q = rawget(_G, "ReadMasteryQuests")
+    if type(Q) ~= "table" or type(Q.enabled) ~= "function" or not Q.enabled() then return end
+    if type(Q.daily) == "function" then
+        local ok, list = pcall(Q.daily)
+        if ok and type(list) == "table" then
+            for i = #list, 1, -1 do
+                local q = list[i]
+                if not q.done then f.quest_daily = q break end
+            end
+        end
+    end
+    if type(Q.open) == "function" then
+        local ok, list = pcall(Q.open)
+        if ok and type(list) == "table" then
+            for _, q in ipairs(list) do
+                local window = ({ weekly = 2, monthly = 5 })[q.period]
+                if q.type == "books_finished" and q.need - q.have == 1 and window and q.days_left <= window then
+                    f.quest_book = q
+                    break
+                end
+            end
+        end
+    end
 end
 
 -- Everything the remarks read, gathered once per build. Missing pieces stay nil.
@@ -143,6 +284,8 @@ local function facts(refresh)
     end
     f.days_in_month = tonumber(os.date("%d", os.time{ year = t.year, month = t.month + 1, day = 0, hour = 12 })) or 30
     f.month_left = f.days_in_month - t.day + 1
+    pcall(suggestions, f)
+    pcall(questFacts, f)
     return f
 end
 
@@ -296,6 +439,79 @@ R.library = {
       sub = function(f) return string.format("%d%% done already.", floor(f.closest.pct * 100)) end },
 }
 
+-- ─── suggestions (remarks with a book: a tap offers to open it) ─────────────
+local TAP = "Tap me."
+local function bookOf(get) return function(f) local b = get(f); return b and b.fp or nil end end
+local S_ = {
+    author = { id = "s_author", mood = "love",
+        when = function(f) return f.sug and f.sug.author end,
+        text = function(f) return string.format("You've finished %s by %s.", n_(f.sug.author.n, "book", "books"), short(f.sug.author.name, 22)) end,
+        sub = function(f) return string.format("%s is waiting. %s", q(f.sug.author.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.author.book end) },
+    series = { id = "s_series", mood = "curious",
+        when = function(f) return f.sug and f.sug.series end,
+        text = function(f) return string.format("Next in %s:", short(f.sug.series.name, 26)) end,
+        sub = function(f) return string.format("%s. %s", q(f.sug.series.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.series.book end) },
+    genre = { id = "s_genre", mood = "playful",
+        when = function(f) return f.sug and f.sug.genre end,
+        text = function(f) return string.format("You keep finishing %s.", short(f.sug.genre.name, 20):lower()) end,
+        sub = function(f) return string.format("Try %s? %s", q(f.sug.genre.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.genre.book end) },
+    hold = { id = "s_hold", mood = "shy",
+        when = function(f) return f.sug and f.sug.hold end,
+        text = function(f) return string.format("Pick %s back up?", q(f.sug.hold.book.title)) end,
+        sub = function(f)
+            local pct = f.sug.hold.pct
+            return (pct and pct > 0) and string.format("You were %d%% in. %s", floor(pct * 100), TAP) or TAP
+        end,
+        fp = bookOf(function(f) return f.sug.hold.book end) },
+    pick = { id = "s_pick", mood = "curious",
+        when = function(f) return f.sug and f.sug.pick end,
+        text = function() return "Something new?" end,
+        sub = function(f) return string.format("%s, never opened. %s", q(f.sug.pick.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.pick.book end) },
+    tonight = { id = "s_tonight", mood = "cheer",
+        when = function(f) return f.sug and f.sug.tonight end,
+        text = function(f) return string.format("%s could be done today.", q(f.sug.tonight.book.title)) end,
+        sub = function(f) return string.format("About %s left. Your usual day is %s.",
+            A.fmtMinutes(f.sug.tonight.left), A.fmtMinutes(f.sug.tonight.usual)) end,
+        fp = bookOf(function(f) return f.sug.tonight.book end) },
+    boost = { id = "s_boost", mood = "curious",
+        when = function(f) return f.sug and f.sug.boost end,
+        text = function(f) return string.format("10 more minutes a day finishes %s %s sooner.",
+            q(f.sug.boost.book.title), n_(f.sug.boost.now_days - f.sug.boost.more_days, "day", "days")) end,
+        sub = function(f) return string.format("%s days instead of %d. %s", f.sug.boost.more_days, f.sug.boost.now_days, TAP) end,
+        fp = bookOf(function(f) return f.sug.boost.book end) },
+    hour = { id = "s_hour", mood = "playful",
+        when = function(f) return f.fav_hour and f.t.hour < f.fav_hour and (f.today_secs or 0) < 600 end,
+        text = function(f) return string.format("Your best reading time is around %s.", hourText(f.fav_hour)) end,
+        sub = function() return "Save a few chapters for it?" end },
+    quest_daily = { id = "s_quest_daily", mood = "cheer",
+        when = function(f) return f.quest_daily ~= nil end,
+        text = function(f)
+            local qd = f.quest_daily
+            if qd.have > 0 then return string.format("Quest: %s, %d of %d %s.", qd.title, qd.have, qd.need, qd.unit) end
+            return string.format("Today's quest: %s.", qd.title)
+        end,
+        sub = function(f)
+            if f.closest then return string.format("%s would do it. %s", q(f.closest.title), TAP) end
+            return string.format("+%d XP in it for you.", f.quest_daily.reward_xp or 0)
+        end,
+        fp = bookOf(function(f) return f.closest end) },
+    quest_book = { id = "s_quest_book", mood = "playful",
+        when = function(f) return f.quest_book ~= nil and f.closest ~= nil end,
+        text = function(f) return string.format("%s needs one more book.", f.quest_book.title) end,
+        sub = function(f) return string.format("%s is %d%% done. %s", q(f.closest.title), floor(f.closest.pct * 100), TAP) end,
+        fp = bookOf(function(f) return f.closest end) },
+}
+local function addAll(list, names) for _, n in ipairs(names) do list[#list + 1] = S_[n] end end
+addAll(R.today,   { "tonight", "boost", "hour", "hold", "quest_daily" })
+addAll(R.yearly,  { "author", "series", "quest_book" })
+addAll(R.monthly, { "tonight", "quest_book", "genre" })
+addAll(R.trends,  { "boost", "hour", "quest_daily" })
+addAll(R.library, { "author", "series", "genre", "hold", "pick" })
+
 -- ─── more ways to say each remark ────────────────────────────────────────────
 -- VARIANTS[id]: other wordings of a remark (its own wording above is the
 -- first); one is dealt with the remark, so a page's lines don't repeat word
@@ -306,6 +522,34 @@ R.library = {
 local function s(text) return function() return text end end
 
 local VARIANTS = {
+    s_author = {
+        { mood = "happy", text = function(f) return string.format("More %s?", short(f.sug.author.name, 24)) end,
+          sub = function(f) return string.format("%s is on your shelf. %s", q(f.sug.author.book.title), TAP) end },
+    },
+    s_series = {
+        { mood = "playful", text = function(f) return string.format("%s isn't over yet.", short(f.sug.series.name, 26)) end,
+          sub = function(f) return string.format("%s is next. %s", q(f.sug.series.book.title), TAP) end },
+    },
+    s_genre = {
+        { mood = "curious", text = function(f) return string.format("Another %s book?", short(f.sug.genre.name, 20):lower()) end,
+          sub = function(f) return string.format("%s fits. %s", q(f.sug.genre.book.title), TAP) end },
+    },
+    s_hold = {
+        { mood = "curious", text = function(f) return string.format("%s misses you.", q(f.sug.hold.book.title)) end,
+          sub = function() return TAP end },
+    },
+    s_pick = {
+        { mood = "playful", text = function(f) return string.format("Judge %s by its cover?", q(f.sug.pick.book.title)) end,
+          sub = function() return TAP end },
+    },
+    s_tonight = {
+        { mood = "party", text = function(f) return string.format("Finish %s today?", q(f.sug.tonight.book.title)) end,
+          sub = function(f) return string.format("%s to go. %s", A.fmtMinutes(f.sug.tonight.left), TAP) end },
+    },
+    s_boost = {
+        { mood = "cheer", text = function(f) return string.format("%s in %d days, or %d.", q(f.sug.boost.book.title), f.sug.boost.now_days, f.sug.boost.more_days) end,
+          sub = function() return "The second one takes 10 more minutes a day." end },
+    },
     t_goal_done = {
         { mood = "cheer", text = s("Goal: done. You: brilliant."),
           sub = function(f) return string.format("%s read today.", A.fmtMinutes(mins(f.today_secs))) end },
@@ -512,9 +756,24 @@ local TIERS = {
 }
 
 -- Pages the reader made: anything from the general pools.
+-- Remarks about a book in progress: tapping the bubble opens that book.
+local CLOSEST_FP = function(f) return f.closest and f.closest.fp or nil end
+for _, kind in ipairs({ "today", "yearly", "monthly", "library" }) do
+    for _, r in ipairs(R[kind]) do
+        if (r.id == "t_closest" or r.id == "y_behind" or r.id == "m_end_book" or r.id == "l_closest") and not r.fp then
+            r.fp = CLOSEST_FP
+        end
+    end
+end
+
 R.custom = {}
-for _, kind in ipairs({ "today", "yearly", "library" }) do
-    for _, r in ipairs(R[kind]) do R.custom[#R.custom + 1] = r end
+do
+    local seen = {}
+    for _, kind in ipairs({ "today", "yearly", "library" }) do
+        for _, r in ipairs(R[kind]) do
+            if not seen[r.id] then seen[r.id] = true; R.custom[#R.custom + 1] = r end
+        end
+    end
 end
 
 local function poolFor(page)
@@ -587,10 +846,16 @@ local function render(line, f)
 end
 
 -- The remark for `page` now: { text, sub, mood }, or nil when nothing fits.
-local function remark(page, refresh, advance)
+local function remark(page, refresh, advance, want_book)
     local pool, kind = poolFor(page)
     local f = facts(refresh)
     local ids, by = eligible(pool, f)
+    if want_book then
+        -- only the remarks that suggest a book
+        local only = {}
+        for _, id in ipairs(ids) do if by[id].fp then only[#only + 1] = id end end
+        if #only > 0 then ids = only end
+    end
     if #ids == 0 then return nil end
     A.state.critter = A.state.critter or {}
     local cur = A.state.critter[kind]
@@ -609,7 +874,28 @@ local function remark(page, refresh, advance)
         sub = TIERS[r.id][tier].sub,   -- its own line or none, as on the home screen
     } or nil
     if not line and (cur.v or 1) > 1 then line = (VARIANTS[r.id] or {})[cur.v - 1] end
-    return (line and render(line, f)) or render(r, f)
+    local out = (line and render(line, f)) or render(r, f)
+    -- only a line that names the book (in quotes) opens it on a tap
+    local names_book = out and ((out.text .. (out.sub or "")):find("\xE2\x80\x9C", 1, true) ~= nil)
+    if out and r.fp and names_book then
+        local ok, fp = pcall(r.fp, f)
+        if ok and type(fp) == "string" then out.fp = fp end
+    end
+    if out then
+        A.state.critter_fp = A.state.critter_fp or {}
+        A.state.critter_fp[(page and page.id) or "?"] = out.fp
+    end
+    return out
+end
+
+--- Tapping the bubble of a remark about a book: opens that book.
+function C.open(page, ctx)
+    local fp = A.state.critter_fp and A.state.critter_fp[(page and page.id) or "?"]
+    if type(fp) == "string" then
+        D.openBook(ctx, fp)
+        return true
+    end
+    return false
 end
 
 --- Tapping the critter: another remark for that page.
@@ -682,14 +968,48 @@ end
 
 C._moveOn = moveOn
 
+-- Height of `text` wrapped to `width` in `face` (SimpleUI's own text box, as
+-- the bubble draws it), cached: nil when it can't be measured.
+local _heights = {}
+local function textHeight(face, bold, text, width)
+    if not (face and text) then return 0 end
+    local key = table.concat({ tostring(face), tostring(bold), width, text }, "|")
+    local v = _heights[key]
+    if v then return v end
+    local UI = sui("infra/sui_core")
+    if type(UI) ~= "table" or type(UI.makeTextBox) ~= "function" then return nil end
+    local ok, box = pcall(UI.makeTextBox, { text = text, face = face, bold = bold, width = width })
+    if not ok or not box then return nil end
+    v = box:getSize().h
+    pcall(box.free, box)
+    if #_heights > 200 then _heights = {} end
+    _heights[key] = v
+    return v
+end
+
+-- Whether `r` fits whole (nothing cut short) in a bubble `bw` wide and `h`
+-- tall, the way SimpleUI's bubble lays it out: the main line, a small gap,
+-- the second line, inside its frame. Unmeasurable counts as fitting.
+local function fits(k, r, bw, h, scale, style, unit, mf, mb, df, db)
+    local _b, _p, reach, frame = k.Bubble.metrics(scale, true, style, unit)
+    local text_w = bw - reach - frame
+    if text_w <= 20 then return false end
+    local mh, ml = textHeight(mf, mb, r.text, text_w), textHeight(mf, mb, "Xg", text_w)
+    if not (mh and ml) then return true end
+    if mh > 2 * ml + 1 then return false end   -- the bubble shows 2 lines of each at most
+    local used = mh + frame
+    if r.sub then
+        local dh, dl = textHeight(df, db, r.sub, text_w), textHeight(df, db, "Xg", text_w)
+        if not (dh and dl) then return true end
+        if dh > 2 * dl + 1 then return false end
+        used = used + dh + A.screen():scaleBySize(2) * scale
+    end
+    return used <= h
+end
+
 function C.draw(c, x, y, w, h, page, ctx, region, max_w)
     if not C.enabled() then return false end
     local area_x, area_w = x, w
-    if max_w and w > max_w then
-        local spot, free = spotFor(page), w - max_w
-        x = x + (spot == "end" and free or (spot == "middle" and floor(free / 2) or 0))
-        w = max_w
-    end
     local k = kit()
     local r = remark(page, ctx and ctx.refresh)
     if not r then return false end
@@ -700,18 +1020,33 @@ function C.draw(c, x, y, w, h, page, ctx, region, max_w)
     if not entry then return false end
     local path = k.Assets.imagePath(entry, moodFor(k, r.mood) or "neutral")
     if not path then return false end
-    local sprite = k.Sprite:new{ path = path, max_w = floor(w * 0.3), max_h = h }
+    local cap = (max_w and max_w < w) and max_w or w
+    local sprite = k.Sprite:new{ path = path, max_w = floor(cap * 0.3), max_h = h }
     local sw, sh = sprite.dimen.w, sprite.dimen.h
     if sw <= 0 or sh <= 0 then return false end
     local gap = max(4, floor(Screen:scaleBySize(6) * scale))
     local style = k.Store and k.Store:get(p .. "critter_bubble_style") or nil
     if style ~= "smooth" then style = "pixel" end
     local unit = sprite.pixel or max(1, Screen:scaleBySize(2))
-    local bubble_w = w - sw - gap
-    if bubble_w < k.Bubble.minWidth(scale, true, style, unit) then return false end
     -- text no smaller than 80% of the home screen critter's, even in a
     -- low heading (the bubble then shows fewer lines)
     local mf, mb, df, db = faces(k, ctx, max(scale, 0.8))
+    -- Long text: the bubble grows, up to all the room in the row, before
+    -- anything is cut short.
+    local group_w = cap
+    if cap < w then
+        for _, cand in ipairs({ cap, floor((cap + w) / 2), w }) do
+            group_w = cand
+            if fits(k, r, cand - sw - gap, h, scale, style, unit, mf, mb, df, db) then break end
+        end
+    end
+    if group_w < w then
+        local spot, free = spotFor(page), w - group_w
+        x = x + (spot == "end" and free or (spot == "middle" and floor(free / 2) or 0))
+    end
+    w = group_w
+    local bubble_w = w - sw - gap
+    if bubble_w < k.Bubble.minWidth(scale, true, style, unit) then return false end
     local ok_b, bubble = pcall(k.Bubble.build, {
         w = bubble_w, h = h, side = "right",
         message = r.text, detail = r.sub,
@@ -728,11 +1063,88 @@ function C.draw(c, x, y, w, h, page, ctx, region, max_w)
         bubble:paintTo(bb, ox + bx, oy + by)
         sprite:paintTo(bb, ox + sx, oy + sy)
     end)
+    -- the whole group: a tap opens the conversation (C.talk)
     if region then c:region(region, bx, y, x + w - bx, h) end
-    -- the band it can wander in, so a tap redraws just that (modules.lua)
+    local id = (page and page.id) or "?"
+    -- the band it can wander in, so a redraw covers just that (modules.lua)
     A.state.critter_box = A.state.critter_box or {}
-    A.state.critter_box[(page and page.id) or "?"] = { x = area_x, y = y, w = area_w, h = h }
+    A.state.critter_box[id] = { x = area_x, y = y, w = area_w, h = h }
+    -- what the conversation needs to open over it
+    A.state.critter_geo = A.state.critter_geo or {}
+    A.state.critter_geo[id] = {
+        canvas = c, bubble = { x = bx, y = by, w = bs.w, h = bs.h }, sprite = { x = sx, y = sy, w = sw, h = sh },
+        style = style, unit = unit, scale = scale, faces = { message = mf, message_bold = mb, answer = df },
+    }
     return true
+end
+
+-- ─── the conversation (a tap): SimpleUI's critter talk window ───────────────
+-- Over a remark about a book: Open it / Another suggestion / Say something
+-- else. Over any other remark: Suggest a book / Not now / Say something else.
+-- `redraw()` repaints the critter's band after the remark changed.
+
+local function absRect(geo, rect)
+    local d = geo.canvas and geo.canvas.dimen
+    if not (d and d.x and d.y) then return nil end
+    local Geom = require("ui/geometry")
+    return Geom:new{ x = d.x + rect.x, y = d.y + rect.y, w = rect.w, h = rect.h }
+end
+
+local function hasBookRemark(page, refresh)
+    local pool = poolFor(page)
+    local f = facts(refresh)
+    for _, r in ipairs(pool) do
+        if r.fp then
+            local ok, yes = pcall(r.when, f)
+            if ok and yes then return true end
+        end
+    end
+    return false
+end
+
+--- Opens the conversation for `page`; returns false when it can't (then the
+--- caller just shows another remark).
+function C.talk(page, ctx, redraw)
+    local id = (page and page.id) or "?"
+    local geo = A.state.critter_geo and A.state.critter_geo[id]
+    local TalkWindow = sui("modules/critter/talk_window")
+    if not (geo and type(TalkWindow) == "table" and type(TalkWindow.open) == "function") then return false end
+    local anchor = absRect(geo, geo.bubble)
+    if not anchor then return false end
+    local fp = A.state.critter_fp and A.state.critter_fp[id]
+    local refresh = ctx and ctx.refresh
+    local function another(book)
+        remark(page, refresh, true, book)
+        moveOn(page)
+        A.state.critter_rev = (A.state.critter_rev or 0) + 1
+        if redraw then redraw() end
+    end
+    local opener, options
+    if fp then
+        opener = nil   -- the bubble already says which book
+        options = {
+            { text = "Open it", on_pick = function() D.openBook(ctx, fp) end },
+            { text = "Another suggestion", on_pick = function() another(true) end },
+        }
+    else
+        local can_suggest = hasBookRemark(page, refresh)
+        opener = can_suggest and "Want me to suggest a book?" or nil
+        options = {}
+        if can_suggest then
+            options[#options + 1] = { text = "Suggest a book", on_pick = function() another(true) end }
+        end
+        options[#options + 1] = { text = "Not now", on_pick = function() end }
+    end
+    local ok = pcall(TalkWindow.open, {
+        opener = opener,
+        options = options,
+        other = { text = "Say something else\xE2\x80\xA6", on_pick = function() another(false) end },
+        anchor = anchor,
+        side = "right",
+        critter_rect = absRect(geo, geo.sprite),
+        style = geo.style, unit = geo.unit, scale = geo.scale, faces = geo.faces,
+    })
+    return ok
 end
 
 return C
