@@ -658,6 +658,7 @@ end
 
 function Dashboard.keep_open(ctx)
     local kind, a, b = dashSplit(dashRegion(ctx))
+    if kind == "nav" and a == "critteropen" then return false end -- opens a book
     if kind == "nav" then return true end
     if kind == "tab" then
         local tab = A.state.dash_tabs and A.state.dash_tabs[a]
@@ -672,17 +673,30 @@ end
 
 function Dashboard.on_tap(ctx)
     local kind, a, b = dashSplit(dashRegion(ctx))
-    if kind == "nav" and a == "critter" then
-        -- another remark from the critter on this page
+    if kind == "nav" and a == "critteropen" then
+        -- the bubble of a remark about a book: open it
         local tabs, pages = dashTabs()
         local page = pages[currentPage(tabs)]
-        if A.critter then pcall(A.critter.next, page, ctx.refresh) end
-        -- only the critter's band of the screen changes
-        local box = page and A.state.critter_box and A.state.critter_box[page.id]
-        if box then
-            H.repaint(ctx, { strip = { x = box.x, y = box.y, w = box.w, h = box.h }, reason = "critter" })
-        else
-            inkRefresh(ctx)
+        if A.critter then pcall(A.critter.open, page, ctx) end
+        return
+    end
+    if kind == "nav" and a == "critter" then
+        -- the critter's conversation (SimpleUI's talk window); without it,
+        -- simply another remark
+        local tabs, pages = dashTabs()
+        local page = pages[currentPage(tabs)]
+        local function redraw()
+            local box = page and A.state.critter_box and A.state.critter_box[page.id]
+            if box then
+                H.repaint(ctx, { strip = { x = box.x, y = box.y, w = box.w, h = box.h }, reason = "critter" })
+            else
+                inkRefresh(ctx)
+            end
+        end
+        local ok, opened = pcall(A.critter.talk, page, ctx, redraw)
+        if not (ok and opened) then
+            pcall(A.critter.next, page, ctx.refresh)
+            redraw()
         end
         return
     end
