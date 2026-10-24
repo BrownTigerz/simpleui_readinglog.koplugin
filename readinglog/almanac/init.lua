@@ -949,6 +949,7 @@ part("panels")
 part("settings")
 part("modules")
 part("menus")
+part("critter")
 
 A.note(A.NAME .. " for " .. A.HOST, A.VERSION, "loaded from", A.dir)
 
