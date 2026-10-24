@@ -90,10 +90,27 @@ With SimpleUI 3.0's **Tiny Critter**, the critter peeks into every Dashboard pag
 | **Library** | Unread books waiting, how much of your library you've read, books on the go at once, books on hold, the next one to finish |
 | **Pages you added** | A mix of Today, Yearly and Library remarks |
 
+It also **suggests books**, worked out from your stats. **Tap the critter or its bubble** and it talks back, in SimpleUI's own critter conversation: over a book suggestion, **Open It**, **Another Suggestion** or **Say Something Else**; over any other remark, it offers to **Suggest A Book**, or **Not Now** / **Say Something Else**. A long remark makes the bubble wider (up to all the room in the row) before anything is cut short.
+
+| Suggestion | Where | Example |
+| --- | --- | --- |
+| An author you finish, with a book of theirs you haven't started | Yearly, Library | "More Alex Michaelides? “The Maidens” is on your shelf." |
+| The next book of a series you've read | Yearly, Library | "Next in Dresden: “Storm Front 2”." |
+| A genre you keep finishing, with a book in it you haven't started | Monthly, Library | "You keep finishing thrillers. Try “The Maidens”?" |
+| A book on hold, and how far in you were | Today, Library | "Pick “Dune” back up? You were 40% in." |
+| A book you could finish today, at your usual pace | Today, Monthly | "“The Hobbit” could be done today. About 45 m left. Your usual day is 40 m." |
+| How much sooner 10 more minutes a day would finish a book | Today, Trends | "10 more minutes a day finishes “And the Mountains Echoed” 4 days sooner." |
+| Your best reading hour, before it comes round | Today, Trends | "Your best reading time is around 6 PM." |
+| Something you've never opened | Library | "Something new? “Sea of Poppies”, never opened." |
+
+With **ReadMastery** and its Quests patch (1.0.6+, Quests (Enhanced) on) it blends in your quests: today's daily quest and the book that would complete it ("Quest: Daily Chapter, 10 of 25 pages. “The Hobbit” would do it."), and a weekly or monthly "finish a book" quest one book short near its end ("Bibliophile needs one more book. “The Hobbit” is 91% done."). Without ReadMastery those simply don't come up.
+
+The book each suggestion picks stays the same all day, and changes the next.
+
 - It sits in the free part of a page's title row, and wanders: right after the title, the middle or the far end, a different spot each day (and on each page), and a new one each time you tap it. It never fills the whole row. On Monthly the month arrows leave it less room.
 - **Today:** the Banner (day and clock) is that page's title row, so the critter wanders in the room to the right of the clock. It needs the Banner's **Heading** style (the default) with its two lines of your own left empty. If you've filled those lines in, turn on Today's own title (Pages and cards → Today → **Title on the page**) and it wanders there instead. It never takes a row of its own.
 - It's your critter, in SimpleUI's bubble style and text sizes, and in a mood that follows SimpleUI's: a grumpy critter doesn't throw a party.
-- Each page keeps its remark for the day, with its numbers kept current. **Tap the critter** for another one. Every remark has three wordings, and a critter in a strong mood (grumpy, sleepy, radiant) says some its own way. A remark doesn't come round again before the others on that page have been seen, nor a wording before the others.
+- Each page keeps its remark for the day, with its numbers kept current. Tap the critter to talk to it (see below), or **Say Something Else** for another remark. Every remark has three wordings, and a critter in a strong mood (grumpy, sleepy, radiant) says some its own way. A remark doesn't come round again before the others on that page have been seen, nor a wording before the others.
 - Nothing moves and nothing runs on a timer. Without SimpleUI 3.0's Tiny Critter it doesn't show, and the pages look as before.
 - Turn it off in Reading Log Settings → **Critter Remarks**.
 
