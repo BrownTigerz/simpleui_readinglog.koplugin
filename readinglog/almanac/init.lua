@@ -152,7 +152,8 @@ A.THEMES.night_sky = { label = "Night sky", accent = "sky",
 A.THEME_ORDER = { "white", "dark", "paper", "forest", "latte", "night_sky" }
 
 -- How progress and charts are drawn (1.9.0).
-A.PROGRESS_STYLES = { { "rings", "Rings" }, { "bars", "Bars" }, { "dots", "Dots" }, { "blocks", "Pixel blocks" } }
+A.PROGRESS_STYLES = { { "rings", "Rings" }, { "bars", "Bars" }, { "dots", "Dots" }, { "blocks", "Pixel blocks" },
+    { "moons", "Moons" }, { "batteries", "Batteries" } }
 A.CHART_STYLES = { { "bars", "Bars" }, { "line", "Line" }, { "stems", "Dots on stems" } }
 local function pick(list, v, default)
     for _, o in ipairs(list) do if o[1] == v then return v end end
@@ -160,6 +161,26 @@ local function pick(list, v, default)
 end
 function A.progressStyle() return pick(A.PROGRESS_STYLES, A.get("progress_style", "rings"), "rings") end
 function A.chartStyle() return pick(A.CHART_STYLES, A.get("chart_style", "bars"), "bars") end
+
+-- Card looks (1.10.0): pictures instead of a card's usual chart.
+A.LOOKS = {
+    goal = { label = "Year goal", options = { { "number", "Number" }, { "stars", "Constellation" }, { "trail", "Critter trail" } } },
+    challenge = { label = "Monthly challenge", options = { { "ring", "Ring" }, { "hourglass", "Hourglass" } } },
+    week = { label = "This week", options = { { "bars", "Chart" }, { "weather", "Weather" } } },
+    year_time = { label = "Time read by month", options = { { "chart", "Chart" }, { "stump", "Tree rings" } } },
+    streak = { label = "Streak", options = { { "ring", "Ring" }, { "fire", "Campfire" } } },
+}
+A.LOOK_ORDER = { "goal", "challenge", "week", "year_time", "streak" }
+-- the sets: several looks at once
+A.LOOK_SETS = {
+    { "night", "Night sky", { progress_style = "moons", look_goal = "stars", look_challenge = "hourglass" } },
+    { "trail", "Trail", { look_goal = "trail", look_week = "weather", look_year_time = "stump", look_streak = "fire" } },
+}
+function A.look(card)
+    local def = A.LOOKS[card]
+    if not def then return nil end
+    return pick(def.options, A.get("look_" .. card, def.options[1][1]), def.options[1][1])
+end
 
 A.DEFAULT_THEME = "white"
 -- names from earlier versions
@@ -616,6 +637,430 @@ function G.ringBars(bb, ox, oy, g, under, inv)
         if f ~= f then f = 0 end
         if f > 0 then G.rrect(bb, x, y, max(bh, floor(w * f + 0.5)), bh, bh / 2, r.fill, under, inv) end
     end
+    -- the campfire under the bars
+    local room = oy + g.cy + R - (y0 + total)
+    if room > 12 and g.fire and G.campfire then
+        G.campfire(bb, ox + g.cx, y0 + total + room * 0.95, min(room * 0.9, w * 0.4), g.fire.level, g.fire.o, under, inv)
+    end
+end
+
+-- ─── picture shapes (1.10.0) ─────────────────────────────────────────────────
+-- Moons, batteries, an hourglass, weather, a tree stump, stars and a campfire.
+-- Shapes with smooth edges are worked out pixel by pixel once and kept as
+-- rows of single-colour runs (keyed by everything that changes them), then
+-- repainted from those: the home screen redraws far more often than the
+-- numbers change. Flat shapes are filled polygons with a smooth outline.
+
+local _runs, _runs_n = {}, 0
+
+-- Runs of the w x h box at x0, y0: pix(px, py) -> r, g, b, coverage (0..1)
+-- for each pixel centre; uncovered pixels are skipped, partly covered ones
+-- blended onto `under`.
+local function shapeRows(key, x0, y0, w, h, under, pix)
+    local hit = _runs[key]
+    if hit then return hit end
+    local rows = {}
+    for j = 0, h - 1 do
+        local row, cur = {}, nil
+        for i = 0, w - 1 do
+            local r, g, b, cov = pix(x0 + i + 0.5, y0 + j + 0.5)
+            if r and cov > 0.01 then
+                if cov < 1 then
+                    r = under[1] + (r - under[1]) * cov
+                    g = under[2] + (g - under[2]) * cov
+                    b = under[3] + (b - under[3]) * cov
+                end
+                local k = floor(r + 0.5) * 65536 + floor(g + 0.5) * 256 + floor(b + 0.5)
+                if cur and cur.k == k and cur.x + cur.n == i then
+                    cur.n = cur.n + 1
+                else
+                    cur = { x = i, n = 1, k = k }
+                    row[#row + 1] = cur
+                end
+            else
+                cur = nil
+            end
+        end
+        rows[j] = row
+    end
+    hit = { rows = rows, h = h }
+    if _runs_n >= 96 then _runs, _runs_n = {}, 0 end
+    _runs[key] = hit
+    _runs_n = _runs_n + 1
+    return hit
+end
+
+local function paintRows(bb, shape, x, y, inv)
+    local rgb = { 0, 0, 0 }
+    local bw, bh = bb:getWidth(), bb:getHeight()
+    for j = 0, shape.h - 1 do
+        local py = y + j
+        if py >= 0 and py < bh then
+            for _, run in ipairs(shape.rows[j]) do
+                local px, n = x + run.x, run.n
+                if px < 0 then n = n + px; px = 0 end
+                if px + n > bw then n = bw - px end
+                if n > 0 then
+                    rgb[1], rgb[2], rgb[3] = floor(run.k / 65536), floor(run.k / 256) % 256, run.k % 256
+                    fillRect(bb, px, py, n, 1, A.color(rgb, inv))
+                end
+            end
+        end
+    end
+end
+
+local function ckey(c) return c and (floor(c[1]) .. "," .. floor(c[2]) .. "," .. floor(c[3])) or "-" end
+local function mix3(a, b, t) return a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t end
+local function clamp01(v) return v < 0 and 0 or (v > 1 and 1 or v) end
+
+-- A filled polygon (even-odd), sharp-edged; pts = { x1, y1, x2, y2, ... }.
+function G.poly(bb, pts, rgb, inv)
+    local n = floor(#pts / 2)
+    if n < 3 then return end
+    local miny, maxy = math.huge, -math.huge
+    for i = 2, 2 * n, 2 do
+        if pts[i] < miny then miny = pts[i] end
+        if pts[i] > maxy then maxy = pts[i] end
+    end
+    local c = A.color(rgb, inv)
+    local bw, bh = bb:getWidth(), bb:getHeight()
+    for py = max(0, floor(miny)), min(bh - 1, ceil(maxy)) do
+        local yc = py + 0.5
+        local xs = {}
+        for i = 1, n do
+            local x1, y1 = pts[2 * i - 1], pts[2 * i]
+            local j = (i % n) + 1
+            local x2, y2 = pts[2 * j - 1], pts[2 * j]
+            if (y1 <= yc and y2 > yc) or (y2 <= yc and y1 > yc) then
+                xs[#xs + 1] = x1 + (yc - y1) * (x2 - x1) / (y2 - y1)
+            end
+        end
+        table.sort(xs)
+        for k = 1, #xs - 1, 2 do
+            local a, b = max(0, floor(xs[k] + 0.5)), min(bw, floor(xs[k + 1] + 0.5))
+            if b > a then fillRect(bb, a, py, b - a, 1, c) end
+        end
+    end
+end
+
+-- A polygon filled, with a smooth outline of width lw in `line`.
+local function shape(bb, pts, fill, line, lw, under, inv)
+    if fill then G.poly(bb, pts, fill, inv) end
+    if line and lw and lw > 0 then
+        local closed = {}
+        for i = 1, #pts do closed[i] = pts[i] end
+        closed[#closed + 1], closed[#closed + 2] = pts[1], pts[2]
+        G.polyline(bb, closed, lw, line, under, inv)
+    end
+end
+G.shape = shape
+
+-- A moon of radius R lit `frac` of the way from new to full, the lit side
+-- growing from the right like a waxing moon. o = { lit, dark, line }
+function G.moon(bb, cx, cy, R, frac, o, under, inv)
+    if not (R > 2 and R < 2048 and cx == cx and cy == cy) then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local t = max(1, R * 0.07)
+    local lit, dark, line = o.lit, o.dark, o.line
+    local ox, oy = floor(cx - R - 1), floor(cy - R - 1)
+    local size = ceil(2 * R + 3)
+    local fx, fy = cx - ox, cy - oy
+    local cosv = math.cos(math.pi * frac)
+    local key = table.concat({ "moon", floor(R * 10), floor(frac * 1000), ckey(lit), ckey(dark), ckey(line), ckey(under),
+        floor((cx - floor(cx)) * 10), floor((cy - floor(cy)) * 10) }, "|")
+    local runs = shapeRows(key, 0, 0, size, size, under, function(px, py)
+        local dx, dy = px - fx, py - fy
+        local d = sqrt(dx * dx + dy * dy)
+        local cov = clamp01(R + 0.5 - d)
+        if cov <= 0 then return nil end
+        local half = sqrt(max(0, R * R - dy * dy))
+        local k
+        if frac >= 0.999 then k = 1 elseif frac <= 0.001 then k = 0 else k = clamp01(dx - half * cosv + 0.5) end
+        local r, g, b = mix3(dark, lit, k)
+        local kl = clamp01(d - (R - t) + 0.5)
+        if kl > 0 then r, g, b = r + (line[1] - r) * kl, g + (line[2] - g) * kl, b + (line[3] - b) * kl end
+        return r, g, b, cov
+    end)
+    paintRows(bb, runs, ox, oy, inv)
+end
+
+-- A battery standing up in the box x, y, w, h: five cells, lit from the
+-- bottom, a lightning bolt when full. o = { fill, track, line, bolt }
+function G.battery(bb, x, y, w, h, frac, o, under, inv)
+    if w < 6 or h < 10 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local nub_h = max(2, floor(h * 0.08))
+    local nub_w = max(3, floor(w * 0.42))
+    local lw = max(2, floor(w * 0.09))
+    local r = max(2, floor(w * 0.16))
+    G.rrect(bb, x + floor((w - nub_w) / 2), y, nub_w, nub_h + r, max(1, floor(nub_h / 2)), o.line, under, inv)
+    G.frame(bb, x, y + nub_h, w, h - nub_h, r, lw, o.line, under, under, inv)
+    local pad = lw + max(1, floor(w * 0.06))
+    local ix, iy, iw, ih = x + pad, y + nub_h + pad, w - 2 * pad, h - nub_h - 2 * pad
+    local cells, gap = 5, max(1, floor(ih * 0.04))
+    local ch = (ih - (cells - 1) * gap) / cells
+    local lit = floor(frac * cells + 0.5)
+    if frac > 0 and lit == 0 then lit = 1 end
+    for i = 1, cells do
+        local cy0 = floor(iy + ih - i * ch - (i - 1) * gap + 0.5)
+        G.rrect(bb, ix, cy0, iw, floor(ch + 0.5), max(1, floor(ch / 5)), (i <= lit) and o.fill or o.track, under, inv)
+    end
+    if frac >= 1 then
+        local cx, cy = x + w / 2, y + nub_h + (h - nub_h) / 2
+        local s = min(iw, ih) * 0.42
+        local pts = { cx + s * 0.15, cy - s * 1.2, cx - s * 0.55, cy + s * 0.1, cx - s * 0.02, cy + s * 0.1,
+                      cx - s * 0.18, cy + s * 1.2, cx + s * 0.55, cy - s * 0.12, cx + s * 0.02, cy - s * 0.12 }
+        shape(bb, pts, o.bolt, o.line, max(1, floor(w * 0.04)), o.fill, inv)
+    end
+end
+
+-- An hourglass in the box centred on cx, cy: `frac` of the sand has run to
+-- the bottom. o = { frame, glass, sand, inside }
+function G.hourglass(bb, cx, cy, w, h, frac, o, under, inv)
+    if w < 10 or h < 16 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local cap = max(3, floor(h * 0.065))
+    local x0, x1 = cx - w / 2, cx + w / 2
+    local yt, yb = cy - h / 2 + cap, cy + h / 2 - cap
+    local hw = w * 0.4                       -- half the bulb's width
+    local neck = max(1, w * 0.045)
+    local ym = cy
+    local H = ym - yt
+    local lw = max(1, floor(w * 0.035))
+    -- glass
+    local top = { cx - hw, yt, cx + hw, yt, cx + neck, ym, cx - neck, ym }
+    local bot = { cx - neck, ym, cx + neck, ym, cx + hw, yb, cx - hw, yb }
+    shape(bb, top, o.inside, nil, 0, under, inv)
+    shape(bb, bot, o.inside, nil, 0, under, inv)
+    -- sand left on top: a level that leaves (1 - frac) of the bulb's area
+    local rest = 1 - frac
+    if rest > 0.001 then
+        local hs = H * sqrt(rest)
+        local ws = neck + (hw - neck) * hs / H
+        G.poly(bb, { cx - neck, ym, cx + neck, ym, cx + ws, ym - hs, cx - ws, ym - hs }, o.sand, inv)
+    end
+    -- the heap below, and the trickle between while it runs
+    if frac > 0.001 then
+        local hb = H * 0.92 * sqrt(frac)
+        local wb = hw * min(1, 0.35 + 0.65 * sqrt(frac))
+        G.poly(bb, { cx - wb, yb, cx + wb, yb, cx + wb * 0.25, yb - hb, cx - wb * 0.25, yb - hb }, o.sand, inv)
+        if frac < 0.999 then
+            G.rect(bb, floor(cx - max(1, lw / 2)), ym, max(1, lw), floor(yb - hb - ym), o.sand, inv)
+        end
+    end
+    shape(bb, top, nil, o.glass, lw, under, inv)
+    shape(bb, bot, nil, o.glass, lw, under, inv)
+    -- frame: top and bottom plates and two posts
+    local post = max(2, floor(w * 0.05))
+    G.rrect(bb, x0, cy - h / 2, w, cap, max(1, floor(cap / 3)), o.frame, under, inv)
+    G.rrect(bb, x0, cy + h / 2 - cap, w, cap, max(1, floor(cap / 3)), o.frame, under, inv)
+    G.rect(bb, x0 + post, yt, post, yb - yt, o.frame, inv)
+    G.rect(bb, x1 - 2 * post, yt, post, yb - yt, o.frame, inv)
+end
+
+-- Weather for a day, an icon of radius r: "sun", "partly" (sun behind a
+-- cloud), "cloud", "rain" or "none" (a day still to come).
+-- o = { sun, cloud, line, rain, faint }
+local function cloud(bb, cx, cy, r, fill, line, under, inv)
+    local lw = max(1, r * 0.09)
+    local parts = { { -0.38, 0.12, 0.36 }, { 0.02, -0.12, 0.48 }, { 0.42, 0.14, 0.32 } }
+    for _, p in ipairs(parts) do G.disc(bb, cx + p[1] * r, cy + p[2] * r, p[3] * r + lw, line, under, inv) end
+    G.rrect(bb, cx - 0.74 * r - lw, cy + 0.06 * r - lw, 1.48 * r + 2 * lw, 0.42 * r + 2 * lw, 0.21 * r + lw, line, under, inv)
+    for _, p in ipairs(parts) do G.disc(bb, cx + p[1] * r, cy + p[2] * r, p[3] * r, fill, line, inv) end
+    G.rrect(bb, cx - 0.74 * r, cy + 0.06 * r, 1.48 * r, 0.42 * r, 0.21 * r, fill, line, inv)
+end
+local function sun(bb, cx, cy, r, col, line, under, inv)
+    local lw = max(2, r * 0.13)
+    local edge = max(1, r * 0.07)
+    local ray = { mix3(col, line, 0.45) }
+    for i = 0, 7 do
+        local a = i * math.pi / 4
+        local s, c = math.sin(a), math.cos(a)
+        G.polyline(bb, { cx + c * r * 0.68, cy + s * r * 0.68, cx + c * r * 0.98, cy + s * r * 0.98 }, lw, ray, under, inv)
+    end
+    -- an outline, so it shows on a black-and-white screen too
+    G.disc(bb, cx, cy, r * 0.48 + edge, line, under, inv)
+    G.disc(bb, cx, cy, r * 0.48, col, line, inv)
+end
+function G.weather(bb, cx, cy, r, kind, o, under, inv)
+    if r < 4 then return end
+    if kind == "sun" then
+        sun(bb, cx, cy, r, o.sun, o.line, under, inv)
+    elseif kind == "partly" then
+        sun(bb, cx + r * 0.28, cy - r * 0.28, r * 0.72, o.sun, o.line, under, inv)
+        cloud(bb, cx - r * 0.08, cy + r * 0.18, r * 0.82, o.cloud, o.line, under, inv)
+    elseif kind == "cloud" then
+        cloud(bb, cx, cy, r * 0.95, o.cloud, o.line, under, inv)
+    elseif kind == "rain" then
+        cloud(bb, cx, cy - r * 0.22, r * 0.9, o.cloud, o.line, under, inv)
+        local lw = max(1, r * 0.1)
+        for i = -1, 1 do
+            local x = cx + i * r * 0.36
+            G.polyline(bb, { x + r * 0.08, cy + r * 0.38, x - r * 0.08, cy + r * 0.78 }, lw, o.rain, under, inv)
+        end
+    else
+        G.disc(bb, cx, cy, max(1.5, r * 0.12), o.faint, under, inv)
+    end
+end
+
+-- A tree stump seen from above: one growth ring per month, as wide as that
+-- month's reading; `best` (a month) shaded in the accent.
+-- o = { bark, wood, ring, best, pith }
+function G.stump(bb, cx, cy, R, values, best, o, under, inv)
+    if R < 8 then return end
+    local n = #values
+    local bark = max(2, floor(R * 0.09))
+    local inner = R - bark
+    local pith = max(1.5, R * 0.05)
+    -- ring widths: the square root of the month's figure, never less than a
+    -- hairline, so a quiet month is still a ring
+    local widths, sum = {}, 0
+    for i = 1, n do
+        widths[i] = sqrt(max(0, values[i] or 0)) + 0.06
+        sum = sum + widths[i]
+    end
+    G.disc(bb, cx, cy, R, o.bark, under, inv)
+    G.disc(bb, cx, cy, inner, o.wood, o.bark, inv)
+    if n == 0 or sum <= 0 then return end
+    local avail = inner - pith - 1
+    local radii, r = {}, pith
+    for i = 1, n do
+        r = r + avail * widths[i] / sum
+        radii[i] = r
+    end
+    if best and radii[best] then
+        G.disc(bb, cx, cy, radii[best], o.best, o.wood, inv)
+        G.disc(bb, cx, cy, best > 1 and radii[best - 1] or pith, o.wood, o.best, inv)
+    end
+    local lw = max(1, R * 0.018)
+    for i = 1, n do
+        G.ring(bb, cx, cy, radii[i] + lw / 2, lw, 1, o.ring, o.ring, o.wood, inv)
+    end
+    G.disc(bb, cx, cy, pith, o.pith, o.wood, inv)
+    -- two cracks from the middle
+    local clw = max(1, R * 0.02)
+    G.polyline(bb, { cx + R * 0.05, cy - R * 0.02, cx + R * 0.32, cy - R * 0.1, cx + R * 0.5, cy - R * 0.06 }, clw, o.ring, o.wood, inv)
+    G.polyline(bb, { cx - R * 0.04, cy + R * 0.05, cx - R * 0.2, cy + R * 0.34 }, clw, o.ring, o.wood, inv)
+end
+
+-- A four-pointed sparkle star of radius r.
+function G.star(bb, cx, cy, r, fill, line, under, inv)
+    if r < 1.5 then return G.disc(bb, cx, cy, max(1, r), fill, under, inv) end
+    local pts = {}
+    for i = 0, 7 do
+        local a = -math.pi / 2 + i * math.pi / 4
+        local rr = (i % 2 == 0) and r or r * 0.34
+        pts[#pts + 1], pts[#pts + 2] = cx + math.cos(a) * rr, cy + math.sin(a) * rr
+    end
+    shape(bb, pts, fill, line, line and max(1, r * 0.1) or 0, under, inv)
+end
+
+-- A campfire on the ground at cx, by (the bottom), `size` tall: flames as
+-- big as `level` (0..1), embers and a wisp of smoke at 0.
+-- o = { log, log_line, flame, core, ember, smoke }
+function G.campfire(bb, cx, by, size, level, o, under, inv)
+    if size < 10 then return end
+    level = clamp01(tonumber(level) or 0)
+    local lw = max(2, size * 0.11)
+    local lx = size * 0.42
+    local base = by - size * 0.14
+    local function logs()
+        G.polyline(bb, { cx - lx, by - size * 0.05, cx + lx, by - size * 0.2 }, lw + 2, o.log_line, under, inv)
+        G.polyline(bb, { cx - lx, by - size * 0.2, cx + lx, by - size * 0.05 }, lw + 2, o.log_line, under, inv)
+        G.polyline(bb, { cx - lx, by - size * 0.05, cx + lx, by - size * 0.2 }, lw, o.log, under, inv)
+        G.polyline(bb, { cx - lx, by - size * 0.2, cx + lx, by - size * 0.05 }, lw, o.log, under, inv)
+    end
+    if level <= 0.001 then
+        logs()
+        for i = -1, 1 do G.disc(bb, cx + i * size * 0.13, base - size * 0.04, max(1.5, size * 0.05), o.ember, under, inv) end
+        G.polyline(bb, { cx, base - size * 0.14, cx - size * 0.08, base - size * 0.34, cx + size * 0.06, base - size * 0.51,
+            cx - size * 0.04, base - size * 0.68 }, max(1, size * 0.04), o.smoke, under, inv)
+        return
+    end
+    -- flames: a teardrop each, the middle one tallest, behind the logs
+    local edge = { mix3(o.flame, o.log_line, 0.5) }
+    local function flame(fx, fh, fw, col, outline)
+        local pts = {}
+        local steps = 14
+        for i = 0, steps do
+            local a = math.pi + math.pi * i / steps
+            pts[#pts + 1], pts[#pts + 2] = fx + math.cos(a) * fw, base - math.sin(a) * fw * 0.5
+        end
+        pts[#pts + 1], pts[#pts + 2] = fx + fw * 0.6, base - fh * 0.5
+        pts[#pts + 1], pts[#pts + 2] = fx + fw * 0.05, base - fh
+        pts[#pts + 1], pts[#pts + 2] = fx - fw * 0.55, base - fh * 0.55
+        shape(bb, pts, col, outline and edge or nil, outline and max(1, size * 0.025) or 0, under, inv)
+    end
+    local s = 0.35 + 0.65 * level
+    local H, W = size * 0.78 * s, size * 0.2 * (0.6 + 0.4 * s)
+    flame(cx - W * 0.9, H * 0.62, W * 0.8, o.flame, true)
+    flame(cx + W * 0.95, H * 0.7, W * 0.8, o.flame, true)
+    flame(cx, H, W * 1.1, o.flame, true)
+    flame(cx, H * 0.55, W * 0.6, o.core, false)
+    logs()
+end
+
+local function groupFire(bb, g, cx, by, size, under, inv)
+    if g.fire and G.campfire then G.campfire(bb, cx, by, size, g.fire.level, g.fire.o, under, inv) end
+end
+-- Rings sharing one centre as moons: the outer ring a big moon, the others
+-- small moons beside it. A moon is as full as its ring. Light colours, so a
+-- figure written over a single moon stays readable.
+function G.ringMoons(bb, ox, oy, g, under, inv)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local cx, cy = ox + g.cx, oy + g.cy
+    local function colours(r)
+        local ink = r.fill
+        -- the lit side glows: lighter than the card on a dark card
+        local lit = (A.luma(under) < 128) and A.mix(ink, { 255, 255, 255 }, 0.4) or A.mix(under, ink, 0.55)
+        return { lit = lit, dark = r.track, line = A.mix(ink, { 0, 0, 0 }, 0.25) }
+    end
+    if n == 1 and not g.fire then
+        G.moon(bb, cx, cy, R * 0.92, list[1].frac, colours(list[1]), under, inv)
+        return
+    end
+    G.moon(bb, cx - R * 0.26, cy - R * 0.22, R * 0.7, list[1].frac, colours(list[1]), under, inv)
+    local spots = { { 0.62, 0.42 }, { 0.12, 0.74 }, { 0.72, -0.4 } }
+    for i = 2, min(n, 4) do
+        local sp = spots[i - 1]
+        G.moon(bb, cx + R * sp[1], cy + R * sp[2], R * 0.27, list[i].frac, colours(list[i]), under, inv)
+    end
+    -- a campfire in the free corner, bottom left
+    groupFire(bb, g, cx - R * 0.62, cy + R * 0.98, R * 0.62, under, inv)
+end
+
+-- Rings sharing one centre as batteries standing side by side in the square
+-- the outer ring fills.
+function G.ringBatteries(bb, ox, oy, g, under, inv)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local side = 2 * R
+    local slots = n + (g.fire and 1 or 0)
+    local gap = max(2, floor(side * 0.06))
+    local bw = min(floor(side * 0.42), floor((side - (slots - 1) * gap) / slots))
+    local bh = floor(side * 0.92)
+    local total = slots * bw + (slots - 1) * gap
+    local x = floor(ox + g.cx - total / 2)
+    local y = floor(oy + g.cy - bh / 2)
+    for i, r in ipairs(list) do
+        G.battery(bb, x + (i - 1) * (bw + gap), y, bw, bh, r.frac, {
+            fill = r.fill, track = r.track, line = A.mix(r.fill, { 0, 0, 0 }, 0.35), bolt = { 255, 214, 60 },
+        }, under, inv)
+    end
+    -- the campfire in the last place, standing on the same ground
+    groupFire(bb, g, x + n * (bw + gap) + bw / 2, y + bh, min(bw * 1.25, bh * 0.5), under, inv)
 end
 
 -- ─── fonts and text ──────────────────────────────────────────────────────────
@@ -768,15 +1213,16 @@ local function canvasClass()
         local inv = self.inv
         local under = (self.tone and self.tone.bg) or self.under
         local style = A.progressStyle()
-        if style == "bars" then
-            -- rings sharing a centre become one set of bars
+        if style == "bars" or style == "moons" or style == "batteries" then
+            -- rings sharing a centre become one set of bars, moons or batteries
             self._rings = self._rings or {}
             local key = cx .. ":" .. cy
             local g = self._rings[key]
             if not g then
                 g = { cx = cx, cy = cy, list = {} }
                 self._rings[key] = g
-                self:op(function(bb, ox, oy) G.ringBars(bb, ox, oy, g, under, inv) end)
+                local draw = (style == "moons" and G.ringMoons) or (style == "batteries" and G.ringBatteries) or G.ringBars
+                self:op(function(bb, ox, oy) draw(bb, ox, oy, g, under, inv) end)
             end
             g.list[#g.list + 1] = { R = R, t = t, frac = frac, track = track, fill = fill }
             return

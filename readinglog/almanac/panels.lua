@@ -108,6 +108,46 @@ local function styledBar(c, tone, px, cx, base, bh, bar_w, r, col, flat, pts)
     end
     c:disc(cx, base - bh, dot, col)
 end
+
+-- ─── card looks (1.10.0): pictures instead of a card's usual chart ───────────
+local G = A.G
+
+-- Draw fn(bb, ox, oy, under, inv) on the canvas, under its later content.
+local function picture(c, fn)
+    local under = (c.tone and c.tone.bg) or { 255, 255, 255 }
+    local inv = c.inv
+    c:op(function(bb, ox, oy) fn(bb, ox, oy, under, inv) end)
+end
+
+-- The streak, where the rings cards have their third ring: a campfire
+-- (Card looks > Streak) as big as the streak against its goal. With rings,
+-- dots or blocks it burns in the middle of the rings; with bars, moons or
+-- batteries it sits at the corner of their square.
+local function streakMark(c, tone, cx, cy, R, t, gap, streak, goal, col)
+    if A.look("streak") ~= "fire" then
+        c:ring(cx, cy, R - 2 * (t + gap), t, streak / goal, tone.track, col)
+        return
+    end
+    local level = (streak or 0) <= 0 and 0 or min(1, streak / goal)
+    local style = A.progressStyle()
+    local fire = {
+        log = { 136, 88, 52 }, log_line = A.mix(tone.fg, { 70, 45, 25 }, 0.5),
+        flame = { 248, 128, 40 }, core = { 255, 216, 90 }, ember = { 236, 104, 40 }, smoke = A.mix(tone.bg, tone.fg, 0.4),
+    }
+    if style == "rings" or style == "dots" or style == "blocks" then
+        local hole = R - t - gap - t
+        local size = hole * 1.55
+        picture(c, function(bb, ox, oy, under, inv) G.campfire(bb, ox + cx, oy + cy + hole * 0.72, size, level, fire, under, inv) end)
+        return
+    end
+    -- bars, moons, batteries: the fire takes a place among them
+    local g = c._rings and c._rings[cx .. ":" .. cy]
+    if g then
+        g.fire = { level = level, o = fire }
+    else
+        picture(c, function(bb, ox, oy, under, inv) G.campfire(bb, ox + cx, oy + cy + R * 0.9, R * 0.8, level, fire, under, inv) end)
+    end
+end
 local function lineThrough(c, tone, px, pts)
     if A.chartStyle() == "line" and pts and #pts >= 4 then c:polyline(pts, max(2, px(3)), tone.accent2) end
 end
@@ -646,7 +686,7 @@ function P.activity.build(env)
     local cols = tone.series
     c:ring(cx, cy, R, t, pages / page_goal, tone.track, cols[1])
     c:ring(cx, cy, R - t - gap, t, mins / min_goal, tone.track, cols[2])
-    c:ring(cx, cy, R - 2 * (t + gap), t, streak / streak_goal, tone.track, cols[3])
+    streakMark(c, tone, cx, cy, R, t, gap, streak, streak_goal, cols[3])
 
     local lines = {
         st and A.plural(pages, "page", "pages") or "\xE2\x80\xA6",
@@ -698,6 +738,165 @@ local function yearFor(env)
     return D.year(env.refresh)
 end
 
+
+-- Card looks > Year goal: a constellation (a star lights up for each book,
+-- joined in the order you finished them) or your critter walking up a
+-- hill trail to a flag at the top. The figures go in the header.
+local function lcg(seed)
+    local x = seed % 2147483647
+    if x <= 0 then x = x + 2147483646 end
+    return function()
+        x = (x * 16807) % 2147483647
+        return (x - 1) / 2147483646
+    end
+end
+
+local function goalStars(c, tone, px, ax, ay, aw, ah, done, target, year)
+    local sky = { 20, 26, 48 }
+    local r_panel = max(4, px(18))
+    c:rrect(ax, ay, aw, ah, r_panel, sky)
+    local n = min(target, 60)
+    local lit = (target <= 60) and min(done, n) or min(n, floor(done * n / target))
+    local rnd = lcg(year * 7919 + target * 31)
+    local m = px(26)
+    local iw, ih = aw - 2 * m, ah - 2 * m
+    -- this year's stars, scattered with some room between them (the same
+    -- sky all year), then joined nearest to nearest from the left: the
+    -- order books light them in
+    local spacing = math.sqrt(iw * ih / n) * 0.62
+    local pts = {}
+    for _ = 1, n * 30 do
+        if #pts >= n then break end
+        local x, y = ax + m + rnd() * iw, ay + m + rnd() * ih
+        local ok = true
+        for _, p in ipairs(pts) do
+            if (p[1] - x) ^ 2 + (p[2] - y) ^ 2 < spacing * spacing then ok = false break end
+        end
+        if ok then pts[#pts + 1] = { x, y, 0.75 + 0.5 * rnd() } end
+    end
+    n = #pts
+    lit = min(lit, n)
+    local order, used = {}, {}
+    local cur = 1
+    for i = 2, n do if pts[i][1] < pts[cur][1] then cur = i end end
+    for _ = 1, n do
+        order[#order + 1] = cur
+        used[cur] = true
+        local best, bd
+        for j = 1, n do
+            if not used[j] then
+                local d = (pts[j][1] - pts[cur][1]) ^ 2 + (pts[j][2] - pts[cur][2]) ^ 2
+                if not bd or d < bd then best, bd = j, d end
+            end
+        end
+        if not best then break end
+        cur = best
+    end
+    local xs, ys, sizes = {}, {}, {}
+    for i, k in ipairs(order) do xs[i], ys[i], sizes[i] = pts[k][1], pts[k][2], pts[k][3] end
+    -- faint background stars
+    local dust = {}
+    for _ = 1, 40 do dust[#dust + 1] = { ax + m * 0.4 + rnd() * (aw - m * 0.8), ay + m * 0.4 + rnd() * (ah - m * 0.8) } end
+    local sr = max(3, min(px(15), spacing * 0.32, ah * 0.07))
+    local full = done >= target
+    picture(c, function(bb, ox, oy, under, inv)
+        for _, d in ipairs(dust) do G.disc(bb, ox + d[1], oy + d[2], max(0.8, sr * 0.1), { 70, 78, 110 }, sky, inv) end
+        if lit >= 2 then
+            local pts = {}
+            for i = 1, lit do pts[#pts + 1] = ox + xs[i]; pts[#pts + 1] = oy + ys[i] end
+            G.polyline(bb, pts, max(1, px(2)), { 140, 152, 196 }, sky, inv)
+        end
+        for i = 1, n do
+            if i <= lit then
+                local big = full and i == lit
+                G.star(bb, ox + xs[i], oy + ys[i], (big and sr * 1.8 or sr) * sizes[i], { 255, 234, 160 }, nil, sky, inv)
+            else
+                G.disc(bb, ox + xs[i], oy + ys[i], max(1, sr * 0.22), { 104, 112, 146 }, sky, inv)
+            end
+        end
+    end)
+    if full then
+        c:label("Constellation complete", max(minFont(), round(sr * 1.6)), ax + m, ay + m * 0.5,
+            { bold = true, color = { 255, 234, 160 }, max_w = aw - 2 * m })
+    end
+end
+
+local function critterSprite(mood, max_h)
+    local okS, Sprite = pcall(require, "modules/critter/sprite")
+    local okA, Assets = pcall(require, "modules/critter/assets")
+    local okT, Store = pcall(require, "infra/sui_store")
+    if not (okS and okA and type(Sprite) == "table" and type(Assets) == "table") then return nil end
+    local ok, sp = pcall(function()
+        local entry = Assets.get(okT and Store and Store:get("simpleui_hs_critter_pick") or nil)
+        local path = entry and Assets.imagePath(entry, mood)
+        if not path then return nil end
+        local w = Sprite:new{ path = path, max_w = max_h * 1.4, max_h = max_h }
+        return (w.dimen and w.dimen.w > 0) and w or nil
+    end)
+    return ok and sp or nil
+end
+
+local function goalTrail(c, tone, px, ax, ay, aw, ah, done, target, diff)
+    local hill = A.mix(tone.bg, A.mix(tone.fg, tone.accent2, 0.35), 0.14)
+    local edge = A.mix(tone.bg, tone.fg, 0.45)
+    local peak_x, peak_y = ax + aw * 0.8, ay + ah * 0.2
+    local outline = { ax, ay + ah, ax + aw * 0.18, ay + ah * 0.72, ax + aw * 0.42, ay + ah * 0.58,
+        ax + aw * 0.6, ay + ah * 0.34, peak_x, peak_y, ax + aw * 0.92, ay + ah * 0.36, ax + aw, ay + ah * 0.48, ax + aw, ay + ah }
+    -- the trail: switchbacks up to the top
+    local path = { ax + aw * 0.04, ay + ah * 0.93, ax + aw * 0.46, ay + ah * 0.84, ax + aw * 0.26, ay + ah * 0.68,
+        ax + aw * 0.6, ay + ah * 0.55, ax + aw * 0.5, ay + ah * 0.38, peak_x, peak_y + ah * 0.02 }
+    local seg, total = {}, 0
+    for i = 1, #path / 2 - 1 do
+        local dx, dy = path[2 * i + 1] - path[2 * i - 1], path[2 * i + 2] - path[2 * i]
+        seg[i] = math.sqrt(dx * dx + dy * dy)
+        total = total + seg[i]
+    end
+    local function at(f)
+        local want = A.clamp(f, 0, 1) * total
+        for i = 1, #seg do
+            if want <= seg[i] or i == #seg then
+                local k = seg[i] > 0 and min(1, want / seg[i]) or 0
+                return path[2 * i - 1] + (path[2 * i + 1] - path[2 * i - 1]) * k, path[2 * i] + (path[2 * i + 2] - path[2 * i]) * k
+            end
+            want = want - seg[i]
+        end
+    end
+    local frac = target > 0 and min(1, done / target) or 0
+    local dot = max(2, px(4))
+    local step = dot * 3.2
+    local walked = A.mix(tone.bg, tone.fg, 0.75)
+    local ahead = A.mix(tone.bg, tone.fg, 0.3)
+    local flag_col = (done >= target) and tone.accent or A.mix(tone.bg, tone.accent, 0.7)
+    local pole_h = ah * 0.2
+    picture(c, function(bb, ox, oy, under, inv)
+        local moved = {}
+        for i = 1, #outline, 2 do moved[i], moved[i + 1] = ox + outline[i], oy + outline[i + 1] end
+        G.shape(bb, moved, hill, edge, max(1, px(2)), under, inv)
+        local n = floor(total / step)
+        for i = 0, n do
+            local x, y = at(i / n)
+            G.disc(bb, ox + x, oy + y, dot / 2, (i / n <= frac) and walked or ahead, hill, inv)
+        end
+        -- the flag on top
+        local fx, fy = ox + peak_x, oy + peak_y
+        G.rect(bb, floor(fx), floor(fy - pole_h), max(2, px(3)), floor(pole_h), edge, inv)
+        G.shape(bb, { fx + px(3), fy - pole_h, fx + px(3) + pole_h * 0.7, fy - pole_h * 0.78, fx + px(3), fy - pole_h * 0.56 },
+            flag_col, edge, max(1, px(2)), hill, inv)
+    end)
+    -- your critter where you are on the trail
+    local mood = (done <= 0 and "sleepy") or (done >= target and "party") or (diff >= 1 and "cheer")
+        or (diff <= -1 and "curious") or "happy"
+    local cx, cy = at(frac)
+    local sp = critterSprite(mood, min(ah * 0.34, px(78)))
+    if sp then
+        c.owned[#c.owned + 1] = sp
+        local sw, sh = sp.dimen.w, sp.dimen.h
+        c:op(function(bb, ox, oy) sp:paintTo(bb, floor(ox + cx - sw / 2), floor(oy + cy - sh + dot)) end)
+    else
+        c:disc(cx, cy - px(10), max(4, px(12)), tone.accent)
+    end
+end
+
 function P.goal.build(env)
     local w, h, tone = env.w, env.h, env.tone
     local strip = (w / h) > 2.6
@@ -731,6 +930,30 @@ function P.goal.build(env)
     end
 
     local top = px(22) + t_label.h
+    local look = A.look("goal")
+    if look ~= "number" and yr then
+        -- the figures in the header, the picture below
+        local right = done .. " of " .. target
+        local t_r = c:text(right, fpx(24), { bold = true, color = tone.fg })
+        local t_s = c:text(status, fpx(20), { color = tone.accent2 })
+        local rx = w - pad
+        if pad + t_label.w + px(16) + t_r.w + px(12) + t_s.w <= rx then
+            c:put(t_s, rx, px(22) + t_label.base, "r", "base")
+            c:put(t_r, rx - t_s.w - px(12), px(22) + t_label.base, "r", "base")
+        elseif pad + t_label.w + px(16) + t_r.w <= rx then
+            c:put(t_r, rx, px(22) + t_label.base, "r", "base")
+        end
+        local ax, ay = pad, top + px(12)
+        local aw, ah = w - 2 * pad, h - ay - px(20)
+        if aw > px(60) and ah > px(40) then
+            if look == "stars" then
+                goalStars(c, tone, px, ax, ay, aw, ah, done, target, t.year)
+            else
+                goalTrail(c, tone, px, ax, ay, aw, ah, done, target, diff)
+            end
+            return c
+        end
+    end
     local pill_h = fpx(56)
     local big_px = fpx(strip and 120 or 150)
     local big = c:text(yr and tostring(done) or "\xE2\x80\xA6", big_px, { bold = true, color = tone.fg })
@@ -1260,9 +1483,30 @@ function P.week.build(env)
         if d then top_v = max(top_v, by_minutes and d.secs or d.pages) end
     end
     local pts = {}
+    local weather = A.look("week") == "weather"
+    local wcol = {
+        sun = { 250, 186, 40 }, cloud = A.mix(tone.bg, { 225, 230, 238 }, 0.8), line = A.mix(tone.bg, tone.fg, 0.65),
+        rain = A.mix(tone.fg, { 60, 120, 200 }, 0.7), faint = A.mix(tone.bg, tone.fg, 0.3),
+    }
+    local goal_min = D.dailyMinutesGoal()
+    local page_goal_w = max(1, tonumber(A.get("activity_page_goal", 30)) or 30)
     for i = 1, 7 do
         local d = week[i] or { pages = 0, secs = 0, wday = ((D.weekStart() + i - 2) % 7) + 1, future = true }
         local v = by_minutes and d.secs or d.pages
+        if weather then
+            -- Card looks > This week: sun for a day the goal was met, sun and
+            -- cloud for some reading, rain for none, a dot for days to come
+            local cx = pad + (i - 1) * col_w + col_w / 2
+            local met = by_minutes and (d.secs / 60 >= goal_min) or (d.pages >= page_goal_w)
+            local kind = d.future and "none" or (met and "sun") or (v > 0 and "partly")
+                or (d.today and "cloud") or "rain"
+            local r = min(col_w * 0.46, area * 0.42)
+            local wy = top + area / 2
+            picture(c, function(bb, ox, oy, under, inv) G.weather(bb, ox + cx, oy + wy, r, kind, wcol, under, inv) end)
+            c:label(DAY_LETTERS[d.wday] or "", fpx(20), cx, base_y + px(8),
+                { anchor = "c", bold = true, color = d.today and tone.accent or tone.label })
+            goto next_day
+        end
         local cx = pad + (i - 1) * col_w + col_w / 2
         local bh = v > 0 and max(bar_w, round(area * v / top_v)) or max(3, px(6))
         bh = min(bh, area)
@@ -1270,6 +1514,7 @@ function P.week.build(env)
         styledBar(c, tone, px, cx, base_y, bh, bar_w, min(bar_w / 2, px(10)), col, false, pts)
         c:label(DAY_LETTERS[d.wday] or "", fpx(20), cx, base_y + px(8),
             { anchor = "c", bold = true, color = d.today and tone.accent or tone.label })
+        ::next_day::
     end
     lineThrough(c, tone, px, pts)
     return c
@@ -2732,6 +2977,35 @@ function P.year_time.build(env)
         for m = 1, 12 do labels[m] = MONTH_LETTERS[m] end
     end
     local top = px(22) + t_head.h + px(22)
+    if A.look("year_time") == "stump" then
+        -- Card looks > Time read by month: a tree stump, a growth ring per
+        -- month as wide as that month's reading, the best month shaded
+        local vals, best, best_v = {}, nil, 0
+        for m = 1, cur do
+            vals[m] = secs[m] / 3600
+            if secs[m] > best_v then best, best_v = m, secs[m] end
+        end
+        local area_h = h - top - px(18)
+        local R = floor(min(area_h / 2, (w - 2 * pad) * 0.3))
+        local cx, cy = pad + R, top + area_h / 2
+        local wood = {
+            bark = { 104, 70, 42 }, wood = { 232, 200, 150 }, ring = { 168, 122, 78 },
+            best = A.mix({ 232, 200, 150 }, tone.accent, 0.55), pith = { 118, 82, 50 },
+        }
+        picture(c, function(bb, ox, oy, under, inv) G.stump(bb, ox + cx, oy + cy, R, vals, best, wood, under, inv) end)
+        local tx = cx + R + px(26)
+        local room = w - pad - tx
+        if room > px(80) then
+            local y = cy - px(54)
+            local t1 = c:label("Widest ring", fpx(20), tx, y, { bold = true, caps = true, color = tone.label, max_w = room })
+            y = y + t1.h + px(4)
+            local t2 = c:label(best and A.date("%B", os.time{ year = 2024, month = best, day = 15, hour = 12 }) or "\xE2\x80\xA6", fpx(30), tx, y, { bold = true, color = tone.accent, max_w = room })
+            y = y + t2.h + px(2)
+            if best then c:label(hoursText(best_v), fpx(22), tx, y, { color = tone.fg, max_w = room }) end
+            c:label(A.plural(cur, "ring", "rings") .. " so far", fpx(19), tx, cy + R - px(24), { color = tone.muted, max_w = room })
+        end
+        return c
+    end
     barChart(c, tone, s, env.ts, {
         x = pad, y = top, w = w - 2 * pad, h = h - top - px(18),
         n = 12, values = values, labels = labels, current = cur, bar_k = 0.62,
@@ -3476,9 +3750,22 @@ function P.challenge.build(env)
     local R = min(px(118), floor(avail / 2), floor(w * 0.24))
     local cx, cy = pad + R, top + floor(avail / 2)
     local t = max(4, round(R * 0.25))
-    c:ring(cx, cy, R, t, min(1, ch.frac), tone.track, col)
     local pct = floor(ch.frac * 100 + 0.5)
-    c:label(pct .. "%", fpx(34 * R / px(118)), cx, cy, { bold = true, anchor = "c", valign = "mid", color = tone.fg })
+    if A.look("challenge") == "hourglass" then
+        -- Card looks > Monthly challenge: the month's sand running down
+        local glass = {
+            frame = { 128, 86, 50 }, glass = A.mix(tone.bg, tone.fg, 0.7),
+            sand = { 226, 178, 88 }, inside = A.mix(tone.bg, { 210, 230, 245 }, 0.5),
+        }
+        local hw, hh = floor(R * 1.15), floor(R * 1.9)
+        picture(c, function(bb, ox, oy, under, inv)
+            G.hourglass(bb, ox + cx, oy + cy - R * 0.08, hw, hh, min(1, ch.frac), glass, under, inv)
+        end)
+        c:label(pct .. "%", fpx(26 * R / px(118)), cx, cy + R * 0.98, { bold = true, anchor = "c", valign = "mid", color = tone.fg })
+    else
+        c:ring(cx, cy, R, t, min(1, ch.frac), tone.track, col)
+        c:label(pct .. "%", fpx(34 * R / px(118)), cx, cy, { bold = true, anchor = "c", valign = "mid", color = tone.fg })
+    end
 
     local tx = cx + R + px(34)
     local room = w - pad - tx
@@ -4808,7 +5095,7 @@ function MINI.today(c, env, x, y, w, h, px, fpx, tone)
             local streak_goal = max(1, tonumber(A.get("activity_streak_goal", 7)) or 7)
             c:ring(cx, cy, R, rt, pages / page_goal, tone.track, cols[1])
             c:ring(cx, cy, R - rt - rg, rt, mins / D.dailyMinutesGoal(), tone.track, cols[2])
-            c:ring(cx, cy, R - 2 * (rt + rg), rt, streak / streak_goal, tone.track, cols[3])
+            streakMark(c, tone, cx, cy, R, rt, rg, streak, streak_goal, cols[3])
             local fx = tx + dia + px(14)
             if one then
                 local xx = fx
@@ -4876,7 +5163,7 @@ function MINI.rings(c, env, x, y, w, h, px, fpx, tone)
     local g = max(1, round(R * 0.055))
     c:ring(cx, cy, R, t, pages / page_goal, tone.track, cols[1])
     c:ring(cx, cy, R - t - g, t, mins / min_goal, tone.track, cols[2])
-    c:ring(cx, cy, R - 2 * (t + g), t, streak / streak_goal, tone.track, cols[3])
+    streakMark(c, tone, cx, cy, R, t, g, streak, streak_goal, cols[3])
     if with_text then
         local step = min(floor((2 * R) / 3), texts[1].h + px(6))
         for i = 1, 3 do c:put(texts[i], cx + R + px(16), cy + (i - 2) * step, "l", "mid") end
