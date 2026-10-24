@@ -13,7 +13,8 @@ pace.", "47 unread books waiting.").
     none comes round again before the others on that page have been seen.
   * Nothing moves and nothing runs on a timer.
   * Insights: getting back into the habit, your best day this month, book
-    milestones, what this month needs for the yearly goal, weekend reading,
+    milestones, your goal pace (books left over days left) and what this
+    month needs for it, weekend reading,
     a book minutes from the end, one you left a while ago, the next in a
     series you just finished, something different after a run of one genre.
     Each only when the stats back it (enough days read, real minutes). The
@@ -252,7 +253,8 @@ suggestions = function(f)
         end
     end
     -- a few quiet days: the book you were on
-    if f.idle and f.idle >= 3 and f.reading and f.reading[1] then
+    if f.idle and f.idle >= 3 and f.reading and f.reading[1]
+            and not (f.quiet_key and A.get("critter_quiet_pass") == f.quiet_key) then
         f.sug.recover = { book = f.reading[1], days = f.idle }
     end
     for _, b in ipairs(f.reading or {}) do
@@ -306,48 +308,75 @@ local MIN_DAY_SECS = 60
 local function backKey(t, back)
     return os.date("%Y-%m-%d", os.time{ year = t.year, month = t.month, day = t.day - back, hour = 12 })
 end
+-- Worked out once per day and minutes read today (redraws reuse it).
+local _rhythm = {}
 local function rhythm(f)
-    local days, t = f.st.days, f.t
-    local BACK = 120
-    local function secs(i)
-        if i == 0 then return f.today_secs or 0 end
-        local r = days[backKey(t, i)]
-        return r and r.secs or 0
-    end
-    local function read(i) return secs(i) >= MIN_DAY_SECS end
-    local i, run = read(0) and 0 or 1, 0
-    while i < BACK and read(i) do run = run + 1; i = i + 1 end
-    local gap = 0
-    while i < BACK and not read(i) do gap = gap + 1; i = i + 1 end
-    if i < BACK then f.run, f.gap = run, gap end      -- a reading day before the gap
-    if not read(0) then
-        local k = 1
-        while k < BACK and not read(k) do k = k + 1 end
-        if k < BACK then f.idle = k - 1 end
-    end
-    -- best day of the month: 20 min+, a week in, 5 other days read
-    if t.day >= 7 and (f.today_secs or 0) >= 1200 then
-        local others, top = 0, 0
-        for d = 1, t.day - 1 do
-            local sv = secs(d)
-            if sv >= MIN_DAY_SECS then others = others + 1; if sv > top then top = sv end end
+    local key = os.date("%Y-%m-%d") .. "|" .. tostring(f.today_secs) .. "|" .. tostring(A.epoch)
+    if _rhythm.key ~= key then
+        local r = {}
+        local days, t = f.st.days, f.t
+        local BACK = 120
+        local function secs(i)
+            if i == 0 then return f.today_secs or 0 end
+            local rec = days[backKey(t, i)]
+            return rec and rec.secs or 0
         end
-        if others >= 5 and f.today_secs > top then f.day_record = true end
+        local function read(i) return secs(i) >= MIN_DAY_SECS end
+        local start = read(0) and 0 or 1
+        local i, run = start, 0
+        while i < BACK and read(i) do run = run + 1; i = i + 1 end
+        local gap = 0
+        while i < BACK and not read(i) do gap = gap + 1; i = i + 1 end
+        if i < BACK then
+            r.run, r.gap = run, gap               -- a reading day before the gap
+            if run > 0 then r.run_start = backKey(t, start + run - 1) end
+        end
+        if not read(0) then
+            local k = 1
+            while k < BACK and not read(k) do k = k + 1 end
+            if k < BACK then r.idle, r.quiet_key = k - 1, backKey(t, k) end   -- since the last reading day
+        end
+        -- best day of the month, in minutes read: a week in, 20 min+, more
+        -- than each of 5+ earlier reading days this month
+        if t.day >= 7 and (f.today_secs or 0) >= 1200 then
+            local others, top = 0, 0
+            for d = 1, t.day - 1 do
+                local sv = secs(d)
+                if sv >= MIN_DAY_SECS then others = others + 1; if sv > top then top = sv end end
+            end
+            if others >= 5 and f.today_secs > top then r.day_record = true end
+        end
+        -- weekends against weekdays, the last 8 weeks: 4+ weekend and 8+
+        -- weekday reading days. 1.6x says so; the verdict then stays until
+        -- the difference is mostly gone (under 1.2x).
+        local we, wd, we_n, wd_n = 0, 0, 0, 0
+        for d = 1, 56 do
+            local sv = secs(d)
+            local wday = os.date("*t", os.time{ year = t.year, month = t.month, day = t.day - d, hour = 12 }).wday
+            if wday == 1 or wday == 7 then
+                we = we + sv; if sv >= MIN_DAY_SECS then we_n = we_n + 1 end
+            else
+                wd = wd + sv; if sv >= MIN_DAY_SECS then wd_n = wd_n + 1 end
+            end
+        end
+        local prev = A.get("critter_weekend")
+        local v = prev
+        if we_n >= 4 and wd_n >= 8 then
+            local we_avg, wd_avg = we / 16, wd / 40
+            v = nil
+            if we_avg >= 1.6 * wd_avg then v = "weekend"
+            elseif wd_avg >= 1.6 * we_avg then v = "weekday"
+            elseif prev == "weekend" and we_avg >= 1.2 * wd_avg then v = "weekend"
+            elseif prev == "weekday" and wd_avg >= 1.2 * we_avg then v = "weekday" end
+            if v == "weekend" then r.weekend_x = wd_avg > 0 and we_avg / wd_avg or 9
+            elseif v == "weekday" then r.weekend_x = we_avg > 0 and wd_avg / we_avg or 9 end
+            if v ~= prev then A.set("critter_weekend", v) end
+        end
+        if v and r.weekend_x then r.weekend = v end
+        _rhythm = { key = key, r = r }
     end
-    -- weekends against weekdays, the last 8 weeks (12+ reading days)
-    local we, wd, n = 0, 0, 0
-    for d = 1, 56 do
-        local sv = secs(d)
-        if sv >= MIN_DAY_SECS then n = n + 1 end
-        local wday = os.date("*t", os.time{ year = t.year, month = t.month, day = t.day - d, hour = 12 }).wday
-        if wday == 1 or wday == 7 then we = we + sv else wd = wd + sv end
-    end
-    local we_avg, wd_avg = we / 16, wd / 40
-    if n >= 12 and wd_avg > 0 and we_avg >= 1.6 * wd_avg then
-        f.weekend, f.weekend_x = "weekend", we_avg / wd_avg
-    elseif n >= 12 and we_avg > 0 and wd_avg >= 1.6 * we_avg then
-        f.weekend, f.weekend_x = "weekday", wd_avg / we_avg
-    end
+    for k, v in pairs(_rhythm.r) do f[k] = v end
+    A.state.critter_quiet_key = f.quiet_key
 end
 
 -- Books finished this month and the two before, newest first (with `at`).
@@ -371,6 +400,7 @@ local function recentFinished(f, refresh)
     if n and list[1] and os.time() - list[1].at <= 3 * 86400 and os.date("%Y", list[1].at) == tostring(t.year)
             and (({ [5] = 1, [10] = 1, [25] = 1, [50] = 1, [75] = 1, [100] = 1 })[n] or (n > 100 and n % 50 == 0)) then
         f.milestone = n
+        f.milestone_new = os.date("%Y-%m-%d", list[1].at) == os.date("%Y-%m-%d")   -- finished today
     end
 end
 
@@ -380,7 +410,12 @@ local function dismissed()
     if type(d) == "table" and d.day == os.date("%Y-%m-%d") and type(d.fps) == "table" then return d.fps end
     return {}
 end
-function C.dismiss(fp)
+function C.dismiss(fp, page)
+    -- passing on the quiet-days nudge: not again this quiet stretch
+    local cur = A.state.critter and A.state.critter[(page and page.id) or "?"]
+    if cur and cur.id == "s_recover" and A.state.critter_quiet_key then
+        A.set("critter_quiet_pass", A.state.critter_quiet_key)
+    end
     if type(fp) ~= "string" then return end
     local fps = dismissed()
     local keep = {}
@@ -461,12 +496,21 @@ local function facts(refresh)
     f.month_left = f.days_in_month - t.day + 1
     if f.st and type(f.st.days) == "table" then pcall(rhythm, f) end
     pcall(recentFinished, f, refresh)
-    -- what this month needs for the yearly pace (1 to 3 books, from the 10th)
-    if f.year_goal and f.year_goal > 0 and f.year_done and f.year_done < f.year_goal and t.day >= 10 then
-        local eom = os.time{ year = t.year, month = t.month + 1, day = 0, hour = 12 }
+    -- goal pace: what's left over the days left (from mid-January), on pace
+    -- or catching up; and what this month needs (1 to 3 books, from the 10th)
+    if f.year_goal and f.year_goal > 0 and f.year_done and f.year_done < f.year_goal then
         local diy = tonumber(os.date("%j", os.time{ year = t.year, month = 12, day = 31, hour = 12 })) or 365
-        local need = math.ceil(f.year_goal * (tonumber(os.date("%j", eom)) or 1) / diy - f.year_done - 1e-9)
-        if need >= 1 and need <= 3 then f.pace_need = need end
+        local doy = tonumber(os.date("%j")) or 1
+        if doy >= 14 then
+            local left, days_left = f.year_goal - f.year_done, diy - doy + 1
+            f.pace = { left = left, days_left = days_left,
+                       on = f.year_done >= f.year_goal * doy / diy - 0.5 }
+        end
+        if t.day >= 10 then
+            local eom = os.time{ year = t.year, month = t.month + 1, day = 0, hour = 12 }
+            local need = math.ceil(f.year_goal * (tonumber(os.date("%j", eom)) or 1) / diy - f.year_done - 1e-9)
+            if need >= 1 and need <= 3 then f.pace_need = need end
+        end
     end
     f.dismissed = dismissed()
     pcall(suggestions, f)
@@ -625,6 +669,13 @@ R.library = {
 }
 
 -- ─── insights ────────────────────────────────────────────────────────────────
+-- "one every 6 days" / "3 a week": the finish rate the goal needs
+local function every(p)
+    local e = p.days_left / p.left
+    if e >= 1.5 then return string.format("one every %d days", floor(e + 0.5)) end
+    return string.format("%d a week", math.ceil(7 / e))
+end
+
 local INSIGHTS = {
     comeback = { id = "t_comeback", mood = "love",
         when = function(f) return f.run == 1 and (f.gap or 0) >= 4 and (f.today_secs or 0) >= MIN_DAY_SECS end,
@@ -643,6 +694,16 @@ local INSIGHTS = {
         text = function(f) return string.format("That's book %d this year!", f.milestone) end,
         sub = function() return "Your shelf is looking lighter." end },
     pace = { id = "y_pace", mood = "curious",
+        when = function(f) return f.pace ~= nil end,
+        text = function(f)
+            if f.pace.on then return "You're on pace for your goal." end
+            return string.format("%s to go, %d days left.", n_(f.pace.left, "book", "books"), f.pace.days_left)
+        end,
+        sub = function(f)
+            if f.pace.on then return string.format("%d to go: about %s.", f.pace.left, every(f.pace)) end
+            return string.format("About %s catches you up.", every(f.pace))
+        end },
+    month_pace = { id = "m_pace", mood = "curious",
         when = function(f) return f.pace_need ~= nil end,
         text = function(f) return string.format("%s this month", n_(f.pace_need, "more book", "more books")) end,
         sub = function() return "would put you right on your yearly pace." end },
@@ -666,7 +727,7 @@ R.trends[#R.trends + 1] = INSIGHTS.comeback
 R.trends[#R.trends + 1] = INSIGHTS.momentum
 R.trends[#R.trends + 1] = INSIGHTS.weekend
 R.monthly[#R.monthly + 1] = INSIGHTS.day_record
-R.monthly[#R.monthly + 1] = INSIGHTS.pace
+R.monthly[#R.monthly + 1] = INSIGHTS.month_pace
 R.yearly[#R.yearly + 1] = INSIGHTS.milestone
 R.yearly[#R.yearly + 1] = INSIGHTS.pace
 R.library[#R.library + 1] = INSIGHTS.discover
@@ -1030,6 +1091,22 @@ VARIANTS.y_milestone = {
     { mood = "cheer", text = function(f) return string.format("Book number %d. Done.", f.milestone) end, sub = s("What's next on the pile?") },
 }
 VARIANTS.y_pace = {
+    { mood = "playful",
+      text = function(f)
+          if f.pace.on then return string.format("Right on track for %d books.", f.year_goal) end
+          return string.format("Your %d-book goal is in reach.", f.year_goal)
+      end,
+      sub = function(f)
+          if f.pace.on then return string.format("Keep it to %s.", every(f.pace)) end
+          return string.format("%s left: %s.", n_(f.pace.left, "book", "books"), every(f.pace))
+      end },
+    { mood = "cheer",
+      text = function(f) return string.format("%s left this year.", n_(f.pace.left, "book", "books")) end,
+      sub = function(f)
+          return (f.pace.on and "You're on pace. About " or "A little behind. About ") .. every(f.pace) .. " does it."
+      end },
+}
+VARIANTS.m_pace = {
     { mood = "playful", text = function(f) return string.format("Finish %s this month?", n_(f.pace_need, "book", "books")) end, sub = s("That keeps your yearly goal on track.") },
     { mood = "cheer", text = s("Your yearly goal is in reach."), sub = function(f) return string.format("%s this month does it.", n_(f.pace_need, "more book", "more books")) end },
 }
@@ -1134,6 +1211,15 @@ local FIRST = { "t_goal_done", "y_goal_done", "y_milestone", "t_day_record", "t_
                 "t_comeback", "t_momentum", "s_series_next" }
 local FIRST_SET = {}
 for _, id in ipairs(FIRST) do FIRST_SET[id] = true end
+-- news only when it's new: a milestone on the day the book was finished, a
+-- comeback run once per comeback (it stays in the rotation after that)
+local FIRST_WHEN = {
+    y_milestone = function(f) return f.milestone_new end,
+    t_momentum = function(f) return f.run_start ~= nil and A.get("critter_news_run") ~= f.run_start end,
+}
+local FIRST_DONE = {
+    t_momentum = function(f) A.set("critter_news_run", f.run_start) end,
+}
 
 local function deal(kind, ids, skip)
     local k = kit()
@@ -1211,9 +1297,12 @@ local function remark(page, refresh, advance, want_book)
         local seen = A.state.critter_first
         if seen.day ~= today then seen = { day = today }; A.state.critter_first = seen end
         for _, id in ipairs(FIRST) do
-            if by[id] and not seen[kind .. ":" .. id] then first = id break end
+            if by[id] and not seen[kind .. ":" .. id] and (not FIRST_WHEN[id] or FIRST_WHEN[id](f)) then first = id break end
         end
-        if first then seen[kind .. ":" .. first] = true end
+        if first then
+            seen[kind .. ":" .. first] = true
+            if FIRST_DONE[first] then FIRST_DONE[first](f) end
+        end
     end
     if first then
         cur = { day = today, id = first, v = dealWording(kind, by[first]) }
@@ -1479,7 +1568,7 @@ function C.talk(page, ctx, redraw)
         opener = nil   -- the bubble already says which book
         options = {
             { text = "Open it", on_pick = function() D.openBook(ctx, fp) end },
-            { text = "Another suggestion", on_pick = function() C.dismiss(fp); another(true) end },
+            { text = "Another suggestion", on_pick = function() C.dismiss(fp, page); another(true) end },
         }
     else
         local can_suggest = hasBookRemark(page, refresh)
