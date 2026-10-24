@@ -120,6 +120,7 @@ end
 function D.progress(fp)
     local ok, pct, status, pages, opened = pcall(A.host.progress, fp)
     if ok then return pct, status, pages, opened end
+    D._progress_err = tostring(pct)
     return nil
 end
 
@@ -171,14 +172,40 @@ function D.reading(limit)
     end
     local list, seen = {}, {}
     local hist = history()
+    local skipped = {} -- for the log: why the newest books weren't counted
     for i = 1, min(#hist, READING_SCAN) do
         local fp = hist[i] and hist[i].file
+        if fp and not seen[fp] and not D.fileExists(fp) and #skipped < 4 then
+            skipped[#skipped + 1] = tostring(fp:match("[^/]+$")) .. " (file not found)"
+        end
         if fp and not seen[fp] and D.fileExists(fp) then
             seen[fp] = true
             local pct, status, pages = D.progress(fp)
             pct = tonumber(pct)
             local in_progress = status == "reading"
                 or (status == nil and pct and pct > 0 and pct < 0.995)
+            -- progress that couldn't be read just now (it happens while a
+            -- settings change redraws everything): a book that was in the
+            -- list stays, so Continue Reading's 1 / 2 pager doesn't vanish.
+            -- D._reading_last outlives D.invalidate, which clears the cache.
+            local kept_old = false
+            if not in_progress and status == nil and pct == nil and D._reading_last then
+                local old = D._reading_last[fp]
+                if old then in_progress, pct, kept_old = true, old, true end
+            end
+            if kept_old and #skipped < 6 then
+                skipped[#skipped + 1] = tostring(fp:match("[^/]+$")) .. " (progress unreadable just now"
+                    .. (D._progress_err and (": " .. D._progress_err) or "") .. ", kept)"
+                D._progress_err = nil
+            end
+            if not in_progress and #skipped < 4 then
+                if pct == nil and status == nil and D._progress_err then
+                    skipped[#skipped + 1] = tostring(fp:match("[^/]+$")) .. " (error: " .. D._progress_err .. ")"
+                    D._progress_err = nil
+                end
+                skipped[#skipped + 1] = string.format("%s (%s, %s)", tostring(fp:match("[^/]+$")),
+                    tostring(status), pct and string.format("%d%%", floor(pct * 100 + 0.5)) or "no progress")
+            end
             if in_progress then
                 local info = D.info(fp)
                 local item = {
@@ -193,7 +220,16 @@ function D.reading(limit)
             end
         end
     end
+    -- Continue Reading's 1 / 2 pager comes and goes with this count
+    if D._reading_n ~= #list then
+        A.log(string.format("reading now: %d books in progress (was %s), %d history entries; not counted: %s",
+            #list, tostring(D._reading_n), #hist, (#skipped > 0) and table.concat(skipped, "; ") or "none"))
+        D._reading_n = #list
+    end
     D._reading = { at = now, list = list, epoch = A.epoch, limit = want }
+    local last = {}
+    for _, it in ipairs(list) do last[it.fp] = it.pct end
+    D._reading_last = last
     if #list <= limit then return list end
     local cut = {}
     for i = 1, limit do cut[i] = list[i] end
