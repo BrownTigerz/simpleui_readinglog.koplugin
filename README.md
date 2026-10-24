@@ -74,8 +74,28 @@ All of these are in Module Settings → Reading Log · Dashboard.
 | **Appearance → Night Mode Theme** | The theme used while night mode is on: Dark (default), Paper, White or Same As Day. |
 | **Appearance → Flash To Clear Ghosting** | Flashes the screen when you switch tabs or turn onto or off the dashboard page, so the old page doesn't linger. Turn it off for faster tab switches at the cost of some ghosting. |
 | **Appearance → Live Clock** | The Banner and Today tab clock update every minute while they're on screen (on by default). Off: the clock updates whenever the page redraws. |
+| **Reading Log Settings → Critter Remarks** | SimpleUI 3.0's Tiny Critter peeks into each Dashboard page with a remark about that page's numbers (on by default). See **Tiny Critter** below. |
 | **Start On Tab** | Which tab shows when you come back to the dashboard (turning onto its page, after a book or sleep): **Last Viewed** (default) or a tab of your choice, e.g. Today. |
 | **Start On First Page After Reading Or Sleep** | Opening a book or putting the device to sleep sends the home screen back to page 1. |
+
+## Tiny Critter
+With SimpleUI 3.0's **Tiny Critter**, the critter peeks into every Dashboard page and says something about that page's numbers:
+
+| Page | It talks about |
+| --- | --- |
+| **Today** | Your daily goal (done, or how much is left), a day well above your usual, a streak that needs a page today or is close to your best, the book closest to done (and the time left in it), this week against last week |
+| **Yearly** | Ahead of or behind your goal pace, where the year is heading at this rate, your best month so far, a month beating every other this year, goal reached |
+| **Monthly** | Books finished this month, already past last month, pages to an average month, the last days of the month and the book you could finish in them |
+| **Trends** | Your streak against your best, the hour you read most, this week against last, your pages and minutes a day lately |
+| **Library** | Unread books waiting, how much of your library you've read, books on the go at once, books on hold, the next one to finish |
+| **Pages you added** | A mix of Today, Yearly and Library remarks |
+
+- It sits in the free part of a page's title row, and wanders: right after the title, the middle or the far end, a different spot each day (and on each page), and a new one each time you tap it. It never fills the whole row. On Monthly the month arrows leave it less room.
+- **Today:** the Banner (day and clock) is that page's title row, so the critter wanders in the room to the right of the clock. It needs the Banner's **Heading** style (the default) with its two lines of your own left empty. If you've filled those lines in, turn on Today's own title (Pages and cards → Today → **Title on the page**) and it wanders there instead. It never takes a row of its own.
+- It's your critter, in SimpleUI's bubble style and text sizes, and in a mood that follows SimpleUI's: a grumpy critter doesn't throw a party.
+- Each page keeps its remark for the day, with its numbers kept current. **Tap the critter** for another one. Every remark has three wordings, and a critter in a strong mood (grumpy, sleepy, radiant) says some its own way. A remark doesn't come round again before the others on that page have been seen, nor a wording before the others.
+- Nothing moves and nothing runs on a timer. Without SimpleUI 3.0's Tiny Critter it doesn't show, and the pages look as before.
+- Turn it off in Reading Log Settings → **Critter Remarks**.
 
 ## Notes
 - **Wallpaper:** with a SimpleUI wallpaper on, the dashboard follows its **Background Opacity** (long-press → Background). Below Solid, the dashboard's page is left clear so the wallpaper shows around and between the cards; the cards and the tab bar stay solid so they stay readable, and the date, time and page titles at the top get a framed plate behind them. At Solid it looks as before. (From Steven's Reading Log for Simple UI 1.2.0.)
