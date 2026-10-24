@@ -273,7 +273,10 @@ function A.onTap(name, ctx)
     if not def.tap then return end
     local ok, err = pcall(def.tap, makeEnv(name, ctx, 0, 0), region)
     if not ok then A.log(name, "tap failed:", err) end
-    if def.keep and def.keep(region) then inkRefresh(ctx) end
+    if def.keep and def.keep(region) then
+        A.state.tap_rev = (A.state.tap_rev or 0) + 1 -- the kept tab is stale (main.lua dashKey)
+        inkRefresh(ctx)
+    end
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -719,7 +722,10 @@ function Dashboard.on_tap(ctx)
         elseif def.tap then
             local ok, err = pcall(def.tap, makeEnv(a, ctx, 0, 0, { nested = true, slot = 1 }), b)
             if not ok then A.log(a, "tap failed:", err) end
-            if def.keep and def.keep(b) then inkRefresh(ctx) end
+            if def.keep and def.keep(b) then
+                A.state.tap_rev = (A.state.tap_rev or 0) + 1 -- next book / another pick: draw it, don't reuse the kept tab
+                inkRefresh(ctx)
+            end
         end
     end
 end
