@@ -682,6 +682,7 @@ end
 -- Tick which of the collection's books are the club's picks for a month.
 -- The arrows step to other months, so next month's can be lined up early.
 local function clubPicks(ctx, env, back)
+    back = back or function() end
     local offset = 0
     local function show()
         local key, when = P.bookclub.monthKey(offset)
@@ -726,6 +727,8 @@ local function clubPicks(ctx, env, back)
     end
     show()
 end
+
+S.clubPicks = clubPicks
 
 ROWS.bookclub = function(env, api, ctx)
     local _, when = P.bookclub.monthKey(0)
