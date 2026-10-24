@@ -27,10 +27,7 @@ Copying over the old folder can leave the old version running. Your settings are
 ![Trends](images/reading-log-trends.png)
 ![Library](images/reading-log-library.png)
 ![Settings](images/readinglog-settings.png)
-![Concept Light Cards](images/reading-log-concepts-light.png)
 ![Concept Critters](images/reading-log-concepts-critters.png)
-![Concept Dark Cards](images/reading-log-concepts-dark.png)
-![Concept Progress Styles](images/reading-log-concepts-styles.png)
 
 ## Put the dashboard on page 2
 1. Simple UI → Home Screen → Modules: set **Number of Pages** to 2.
