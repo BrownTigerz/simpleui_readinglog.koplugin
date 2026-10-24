@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.9.0, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.10.0, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Built for Simple UI by Doctor Hetfield
@@ -109,6 +109,8 @@ end
 -- never settles) and the screen is redrawing in a loop.
 local _rf = { t0 = 0, n = 0, by = {}, warned = false }
 local function noteRefresh(reason)
+    -- your own taps (tabs, 1/2, Another) aren't a loop, however fast
+    if tostring(reason):find("^tap") then return end
     local t = os.time()
     if t - _rf.t0 >= 10 then _rf.t0, _rf.n, _rf.by, _rf.warned = t, 0, {}, false end
     _rf.n = _rf.n + 1
@@ -674,6 +676,11 @@ local function kit()
             members = function() return swipeCards(spot) end,
             build = function(env) return buildSwipe(spot, env) end,
             tap = function(env, region) return tapSwipe(spot, env, region) end,
+            hold = function(env, region)
+                local inner, sub = type(region) == "string" and region:match("^([%w_]+)|(.*)$")
+                if not inner or not A.holdPanel then return false end
+                return A.holdPanel(inner, (sub ~= "") and sub or nil, env.ctx, true)
+            end,
         }
         swipeWeight(spot)
     end
@@ -1219,6 +1226,7 @@ local function wrapCanvas(inst, canvas, slot_w, slot_h, full_x, full_y)
     box.ges_events = {
         ReadingLogTap = { GestureRange:new{ ges = "tap", range = function() return inst.rect or box.dimen end } },
         ReadingLogSwipe = { GestureRange:new{ ges = "swipe", range = function() return inst.rect or box.dimen end } },
+        ReadingLogHold = { GestureRange:new{ ges = "hold", range = function() return inst.rect or box.dimen end } },
     }
     inst.box, inst.w, inst.h, inst.rect = box, w, h, nil
     local base_paint = box.paintTo
@@ -1266,6 +1274,26 @@ local function wrapCanvas(inst, canvas, slot_w, slot_h, full_x, full_y)
         end
         _last_tap = os.time()
         return true
+    end
+    -- A long-press on a card with its own use for it (Book Club: this
+    -- month's picks); anything else is left to SimpleUI (module settings).
+    function box:onReadingLogHold(_, ges)
+        local Ak = kit()
+        if not Ak or not ges or not ges.pos then return false end
+        local o = inst.rect or self.dimen
+        local rx, ry = ges.pos.x - (o.x or 0), ges.pos.y - (o.y or 0)
+        local region = pickRegion(inst.regions, rx, ry)
+        local ctx = bookshelfCtx(inst, w, h)
+        ctx.tapped_region = region
+        local ok, handled
+        if inst.dashboard then
+            ok, handled = pcall(Ak.Dashboard.on_hold, ctx)
+        else
+            ok, handled = pcall(Ak.onHold, inst.card, ctx)
+        end
+        diag("hold %s at %d,%d -> region %s: %s", inst.id, rx, ry, tostring(region),
+            (ok and handled) and "handled" or "left to SimpleUI")
+        return (ok and handled) and true or false
     end
     -- Left/right swipe that starts on a swipe spot switches its card; any
     -- other swipe is left to SimpleUI (page turns).
@@ -1411,7 +1439,7 @@ local function makeModule(inst, title)
             }
         end
 
-        local NIGHT = { { "dark", _("Dark") }, { "night_sky", _("Night Sky") }, { "paper", _("Paper") }, { "white", _("White") }, { "off", _("Same As Day") } }
+        local NIGHT = { { "dark", _("Dark") }, { "night_sky", _("Night Sky") }, { "paper", _("Paper") }, { "white", _("White") }, { "cat_night", _("Cat") }, { "latte_night", _("Latte") }, { "off", _("Same As Day") } }
         local night_items = {}
         for _i, opt in ipairs(NIGHT) do -- not `_`: that is gettext here
             night_items[#night_items + 1] = {
