@@ -25,8 +25,8 @@ Copying over the old folder can leave the old version running. Your settings are
 ![Monthly](images/reading-log-monthly.png)
 ![Yearly](images/reading-log-yearly.png)
 ![Trends](images/reading-log-trends.png)
-![Library](images/reading-log-library.png)
-![Settings](images/readinglog-settings.png)
+![Today Seasonal](images/reading-log-today-seasonal.png)
+![Monthly Cat](images/reading-log-monthly-cat.png)
 ![Concept Critters](images/reading-log-concepts-critters.png)
 
 ## Put the dashboard on page 2
