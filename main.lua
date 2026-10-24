@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.7.2, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.8.0, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Built for Simple UI by Doctor Hetfield
@@ -595,7 +595,8 @@ local function kit()
         if not inst then return origRepaint(ctx, o) end
         o = o or {}
         if o.strip then
-            inst.request("clock", "ui", true, o.strip)
+            -- a band of the card: the clock's minute, or the critter's new remark
+            inst.request(o.reason or "clock", "ui", true, o.strip)
         elseif o.flash then
             inst.request("tap (whole card)", flashMode(), true)
         else
@@ -1078,6 +1079,7 @@ local function dashKey(inst, w, h)
         tostring(Ak.themeId()), Screen.night_mode and "n" or "d", tostring(Ak.state.month_offset or 0),
         os.date("%Y-%m-%d"), tostring(Ak.textSizePct(nil, inst.id)),
         bg[1] .. "." .. bg[2] .. "." .. bg[3], seeThrough(inst) and "see" or "solid",
+        tostring(Ak.state.critter_rev or 0), -- tapping the critter: a new remark
     }, "|")
 end
 
