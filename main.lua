@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.8.1, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.9.0, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Built for Simple UI by Doctor Hetfield
@@ -1410,7 +1410,7 @@ local function makeModule(inst, title)
             }
         end
 
-        local NIGHT = { { "dark", _("Dark") }, { "paper", _("Paper") }, { "white", _("White") }, { "off", _("Same As Day") } }
+        local NIGHT = { { "dark", _("Dark") }, { "night_sky", _("Night Sky") }, { "paper", _("Paper") }, { "white", _("White") }, { "off", _("Same As Day") } }
         local night_items = {}
         for _i, opt in ipairs(NIGHT) do -- not `_`: that is gettext here
             night_items[#night_items + 1] = {
