@@ -149,11 +149,25 @@ A.THEMES.latte = { label = "Latte", accent = "brown",
 A.THEMES.night_sky = { label = "Night sky", accent = "sky",
     surface = { 18, 24, 40 }, tint = { 34, 42, 64 }, fg = { 232, 236, 248 }, border = { 92, 104, 140 }, thin = true,
     page = { 18, 24, 40 }, page_fg = { 232, 236, 248 } }
-A.THEME_ORDER = { "white", "dark", "paper", "forest", "latte", "night_sky" }
+-- Cat (1.10.0): cream and ginger by day, a cosy dark brown at night, pink
+-- (a nose) the second accent.
+A.THEMES.cat = { label = "Cat", accent = "orange", accent2 = "pink",
+    surface = { 255, 238, 221 }, tint = { 255, 221, 204 }, fg = { 68, 34, 17 }, border = { 153, 85, 51 },
+    page = { 255, 238, 221 }, page_fg = { 68, 34, 17 } }
+A.THEMES.cat_night = { label = "Cat (night)", accent = "orange", accent2 = "pink",
+    surface = { 34, 17, 17 }, tint = { 51, 34, 34 }, fg = { 255, 238, 221 }, border = { 136, 85, 68 }, thin = true,
+    page = { 34, 17, 17 }, page_fg = { 255, 238, 221 } }
+A.THEMES.latte_night = { label = "Latte (night)", accent = "brown",
+    surface = { 51, 34, 17 }, tint = { 68, 51, 34 }, fg = { 255, 238, 221 }, border = { 136, 102, 68 }, thin = true,
+    page = { 51, 34, 17 }, page_fg = { 255, 238, 221 } }
+A.THEME_ORDER = { "white", "dark", "paper", "forest", "latte", "night_sky", "cat", "cat_night", "latte_night" }
 
 -- How progress and charts are drawn (1.9.0).
 A.PROGRESS_STYLES = { { "rings", "Rings" }, { "bars", "Bars" }, { "dots", "Dots" }, { "blocks", "Pixel blocks" },
-    { "moons", "Moons" }, { "batteries", "Batteries" } }
+    { "moons", "Moons" }, { "batteries", "Batteries" }, { "seasonal", "Seasonal" }, { "vials", "Potion vials" },
+    { "ribbons", "Bookmark ribbons" }, { "scrolls", "Scrolls" }, { "cats", "Cats" }, { "paws", "Paw prints" } }
+-- styles where a card's rings become one set of pictures
+A.GROUP_STYLES = { bars = true, moons = true, batteries = true, seasonal = true, vials = true, ribbons = true, scrolls = true, cats = true }
 A.CHART_STYLES = { { "bars", "Bars" }, { "line", "Line" }, { "stems", "Dots on stems" } }
 local function pick(list, v, default)
     for _, o in ipairs(list) do if o[1] == v then return v end end
@@ -168,13 +182,28 @@ A.LOOKS = {
     challenge = { label = "Monthly challenge", options = { { "ring", "Ring" }, { "hourglass", "Hourglass" } } },
     week = { label = "This week", options = { { "bars", "Chart" }, { "weather", "Weather" } } },
     year_time = { label = "Time read by month", options = { { "chart", "Chart" }, { "stump", "Tree rings" } } },
-    streak = { label = "Streak", options = { { "ring", "Ring" }, { "fire", "Campfire" } } },
+    streak = { label = "Streak", options = { { "ring", "Ring" }, { "fire", "Campfire" }, { "yarn", "Ball of yarn" } } },
+    wood = { label = "Campfire woodpile", options = { { "on", "On" }, { "off", "Off" } } },
+    time_icon = { label = "Time of day", options = { { "off", "Off" }, { "on", "On" } } },
 }
-A.LOOK_ORDER = { "goal", "challenge", "week", "year_time", "streak" }
+A.LOOK_ORDER = { "goal", "challenge", "week", "year_time", "streak", "wood", "time_icon" }
 -- the sets: several looks at once
+-- false: back to that setting's default
 A.LOOK_SETS = {
     { "night", "Night sky", { progress_style = "moons", look_goal = "stars", look_challenge = "hourglass" } },
     { "trail", "Trail", { look_goal = "trail", look_week = "weather", look_year_time = "stump", look_streak = "fire" } },
+    -- the presets: a theme and looks that go together
+    { "cozy", "Cozy cabin", { theme = "latte", night_theme = "latte_night", progress_style = "batteries", chart_style = false, look_streak = "fire",
+        look_wood = false, look_week = "weather", look_year_time = "stump", look_goal = "trail", look_challenge = "hourglass",
+        look_time_icon = "on" } },
+    { "midnight", "Midnight reader", { theme = "night_sky", night_theme = "night_sky", progress_style = "moons", chart_style = "line", look_goal = "stars",
+        look_challenge = "hourglass", look_streak = false, look_week = false, look_year_time = false, look_time_icon = "on" } },
+    { "minimal", "Minimal focus", { theme = "white", night_theme = "dark", progress_style = "dots", chart_style = "stems", look_goal = false,
+        look_challenge = false, look_week = false, look_year_time = false, look_streak = false, look_time_icon = false } },
+    { "seasonal", "Seasonal", { night_theme = "dark", progress_style = "seasonal", look_streak = "fire", look_time_icon = "on" } },
+    { "cat", "Cat lover", { theme = "cat", night_theme = "cat_night", accent = false, accent2 = false, progress_style = "cats",
+        chart_style = false, look_streak = "yarn", look_goal = "trail", look_week = "weather", look_challenge = "hourglass",
+        look_year_time = false, look_time_icon = "on" } },
 }
 function A.look(card)
     local def = A.LOOKS[card]
@@ -214,7 +243,10 @@ function A.accentIds()
     local a = A.get("accent", nil)
     if not A.ACCENTS[a] then a = th.accent end
     local b = A.get("accent2", nil)
-    if not A.ACCENTS[b] then b = A.ACCENTS[a].pair end
+    if not A.ACCENTS[b] then
+        -- a theme can name its own second accent (while its first is in use)
+        b = (th.accent2 and a == th.accent) and th.accent2 or A.ACCENTS[a].pair
+    end
     return a, b
 end
 
@@ -961,12 +993,34 @@ end
 -- A campfire on the ground at cx, by (the bottom), `size` tall: flames as
 -- big as `level` (0..1), embers and a wisp of smoke at 0.
 -- o = { log, log_line, flame, core, ember, smoke }
+-- A woodpile beside the fire: `left` (0..1) of the day's reading still to
+-- do, up to 4 logs; it burns down as you read, gone at the daily goal.
+local function woodpile(bb, x, by, size, left, o, under, inv)
+    local n = math.ceil(clamp01(tonumber(left) or 0) * 4 - 1e-6)
+    if n <= 0 then return end
+    local r = max(2.5, size * 0.1)
+    local rows = (n == 4) and { 3, 1 } or (n == 3) and { 2, 1 } or { n }
+    for row, cnt in ipairs(rows) do
+        local y = by - r - (row - 1) * r * 1.75
+        local x0 = x + r + (row - 1) * r * 0.9
+        for k = 0, cnt - 1 do
+            local lx = x0 + k * r * 1.85
+            -- a log seen end-on: bark ring, lighter wood inside
+            G.disc(bb, lx, y, r, o.log_line, under, inv)
+            G.disc(bb, lx, y, r * 0.66, o.log, o.log_line, inv)
+        end
+    end
+end
+
+G.woodpile = woodpile
+
 function G.campfire(bb, cx, by, size, level, o, under, inv)
     if size < 10 then return end
     level = clamp01(tonumber(level) or 0)
     local lw = max(2, size * 0.11)
     local lx = size * 0.42
     local base = by - size * 0.14
+    if o.wood then woodpile(bb, cx + size * 0.52, by, size, o.wood, o, under, inv) end
     local function logs()
         G.polyline(bb, { cx - lx, by - size * 0.05, cx + lx, by - size * 0.2 }, lw + 2, o.log_line, under, inv)
         G.polyline(bb, { cx - lx, by - size * 0.2, cx + lx, by - size * 0.05 }, lw + 2, o.log_line, under, inv)
@@ -996,15 +1050,26 @@ function G.campfire(bb, cx, by, size, level, o, under, inv)
     end
     local s = 0.35 + 0.65 * level
     local H, W = size * 0.78 * s, size * 0.2 * (0.6 + 0.4 * s)
+    local streak = tonumber(o.streak) or 0
+    -- a week in a row: a wider glow behind the flames
+    if streak >= 7 then flame(cx, H * 1.12, W * 1.9, o.ember, false) end
     flame(cx - W * 0.9, H * 0.62, W * 0.8, o.flame, true)
     flame(cx + W * 0.95, H * 0.7, W * 0.8, o.flame, true)
     flame(cx, H, W * 1.1, o.flame, true)
     flame(cx, H * 0.55, W * 0.6, o.core, false)
     logs()
+    -- three days in a row: sparks over the fire (more at a week)
+    if streak >= 3 then
+        local spots = { { -0.55, 1.05 }, { 0.5, 1.18 }, { -0.1, 1.32 }, { 0.85, 0.92 }, { -0.85, 0.85 } }
+        for k = 1, (streak >= 7 and 5 or 3) do
+            local sp = spots[k]
+            G.disc(bb, cx + sp[1] * W * 1.4, base - sp[2] * H, max(1.2, size * 0.035), o.core, under, inv)
+        end
+    end
 end
 
 local function groupFire(bb, g, cx, by, size, under, inv)
-    if g.fire and G.campfire then G.campfire(bb, cx, by, size, g.fire.level, g.fire.o, under, inv) end
+    if g.fire and G.streakPicture then G.streakPicture(bb, g, cx, by, size, under, inv) end
 end
 -- Rings sharing one centre as moons: the outer ring a big moon, the others
 -- small moons beside it. A moon is as full as its ring. Light colours, so a
@@ -1061,6 +1126,523 @@ function G.ringBatteries(bb, ox, oy, g, under, inv)
     end
     -- the campfire in the last place, standing on the same ground
     groupFire(bb, g, x + n * (bw + gap) + bw / 2, y + bh, min(bw * 1.25, bh * 0.5), under, inv)
+end
+
+-- ─── more progress pictures (1.10.0) ─────────────────────────────────────────
+-- Seasonal icons that fill from the bottom, potion vials, bookmark ribbons
+-- and scrolls. Like moons and batteries, a card's rings sharing one centre
+-- become a row of them (scrolls: a stack), with the campfire in a place of
+-- its own.
+
+-- Icon outlines in a unit box (y down): c = circle, e = ellipse, r = rect,
+-- p = polygon. `acc` are solid touches drawn on top (a leaf, a stem).
+local function rotBar(cx, cy, len, wid, a)
+    local ux, uy = math.cos(a), math.sin(a)
+    local vx, vy = -uy, ux
+    local hl, hw = len / 2, wid / 2
+    return { "p", { cx - ux * hl - vx * hw, cy - uy * hl - vy * hw, cx + ux * hl - vx * hw, cy + uy * hl - vy * hw,
+                    cx + ux * hl + vx * hw, cy + uy * hl + vy * hw, cx - ux * hl + vx * hw, cy - uy * hl + vy * hw } }
+end
+local function snowflake()
+    local p = { { "c", 0.5, 0.5, 0.11 } }
+    for k = 0, 2 do p[#p + 1] = rotBar(0.5, 0.5, 0.94, 0.12, k * math.pi / 3) end
+    for k = 0, 5 do
+        local a = k * math.pi / 3
+        local bx, by = 0.5 + math.cos(a) * 0.3, 0.5 + math.sin(a) * 0.3
+        p[#p + 1] = rotBar(bx + math.cos(a + 0.8) * 0.07, by + math.sin(a + 0.8) * 0.07, 0.19, 0.08, a + 0.8)
+        p[#p + 1] = rotBar(bx + math.cos(a - 0.8) * 0.07, by + math.sin(a - 0.8) * 0.07, 0.19, 0.08, a - 0.8)
+    end
+    return p
+end
+local function sunIcon()
+    local p = { { "c", 0.5, 0.5, 0.25 } }
+    for k = 0, 7 do
+        local a = k * math.pi / 4
+        local ux, uy, vx, vy = math.cos(a), math.sin(a), -math.sin(a), math.cos(a)
+        p[#p + 1] = { "p", { 0.5 + ux * 0.31 - vx * 0.07, 0.5 + uy * 0.31 - vy * 0.07, 0.5 + ux * 0.49, 0.5 + uy * 0.49,
+                             0.5 + ux * 0.31 + vx * 0.07, 0.5 + uy * 0.31 + vy * 0.07 } }
+    end
+    return p
+end
+local function flower()
+    local p = { { "c", 0.5, 0.4, 0.12 }, { "r", 0.47, 0.55, 0.06, 0.43 } }
+    for k = 0, 4 do
+        local a = -math.pi / 2 + k * 2 * math.pi / 5
+        p[#p + 1] = { "c", 0.5 + math.cos(a) * 0.22, 0.4 + math.sin(a) * 0.22, 0.15 }
+    end
+    return p
+end
+local function sailboat()
+    return { { "p", { 0.08, 0.7, 0.92, 0.7, 0.78, 0.9, 0.22, 0.9 } },          -- hull
+             { "p", { 0.53, 0.06, 0.53, 0.64, 0.9, 0.64 } },                    -- big sail
+             { "p", { 0.47, 0.18, 0.47, 0.64, 0.16, 0.64 } },                   -- small sail
+             { "r", 0.47, 0.06, 0.06, 0.66 } }                                  -- mast
+end
+A.SEASON_ICONS = {
+    { "jan", "Snowflake (January)", { 110, 165, 225 }, snowflake() },
+    { "feb", "Heart (February)", { 222, 56, 92 },
+      { { "c", 0.3, 0.36, 0.22 }, { "c", 0.7, 0.36, 0.22 }, { "p", { 0.09, 0.43, 0.91, 0.43, 0.5, 0.93 } } } },
+    { "mar", "Shamrock (March)", { 56, 156, 78 },
+      { { "c", 0.5, 0.27, 0.19 }, { "c", 0.29, 0.51, 0.19 }, { "c", 0.71, 0.51, 0.19 }, { "c", 0.5, 0.47, 0.12 },
+        { "p", { 0.46, 0.58, 0.55, 0.58, 0.63, 0.97, 0.54, 0.97 } } } },
+    { "apr", "Raindrop (April)", { 70, 140, 222 },
+      { { "c", 0.5, 0.64, 0.3 }, { "p", { 0.5, 0.03, 0.775, 0.52, 0.225, 0.52 } } } },
+    { "may", "Flower (May)", { 232, 108, 170 }, flower(), acc = { { { "c", 0.5, 0.4, 0.09 }, { 255, 210, 70 } } } },
+    { "jun", "Sun (June)", { 246, 188, 36 }, sunIcon() },
+    { "jul", "Maple leaf (July)", { 212, 38, 38 },
+      { { "p", { 0.5, 0.02, 0.58, 0.2, 0.66, 0.16, 0.63, 0.36, 0.8, 0.24, 0.78, 0.32, 0.96, 0.3, 0.88, 0.44,
+                 0.94, 0.48, 0.72, 0.62, 0.76, 0.7, 0.54, 0.66, 0.53, 0.8, 0.47, 0.8, 0.46, 0.66, 0.24, 0.7,
+                 0.28, 0.62, 0.06, 0.48, 0.12, 0.44, 0.04, 0.3, 0.22, 0.32, 0.2, 0.24, 0.37, 0.36, 0.34, 0.16, 0.42, 0.2 } },
+        { "r", 0.475, 0.78, 0.05, 0.2 } } },
+    { "aug", "Sailboat (August)", { 40, 128, 200 }, sailboat() },
+    { "sep", "Apple (September)", { 204, 40, 52 },
+      { { "c", 0.37, 0.56, 0.29 }, { "c", 0.63, 0.56, 0.29 }, { "c", 0.5, 0.7, 0.25 } },
+      acc = { { { "p", { 0.47, 0.1, 0.53, 0.1, 0.53, 0.3, 0.48, 0.3 } }, { 110, 80, 45 } },
+              { { "e", 0.65, 0.17, 0.12, 0.055 }, { 70, 150, 60 } } } },
+    { "oct", "Pumpkin (October)", { 240, 128, 30 },
+      { { "e", 0.31, 0.6, 0.22, 0.31 }, { "e", 0.69, 0.6, 0.22, 0.31 }, { "e", 0.5, 0.6, 0.2, 0.33 } },
+      acc = { { { "p", { 0.45, 0.12, 0.55, 0.14, 0.54, 0.3, 0.46, 0.3 } }, { 96, 120, 50 } } } },
+    { "nov", "Poppy (November)", { 212, 30, 40 },
+      { { "c", 0.34, 0.38, 0.22 }, { "c", 0.66, 0.38, 0.22 }, { "c", 0.34, 0.64, 0.22 }, { "c", 0.66, 0.64, 0.22 } },
+      acc = { { { "c", 0.5, 0.51, 0.11 }, { 28, 28, 28 } } } },
+    { "dec", "Christmas tree (December)", { 40, 128, 62 },
+      { { "p", { 0.5, 0.04, 0.78, 0.37, 0.22, 0.37 } }, { "p", { 0.5, 0.2, 0.86, 0.6, 0.14, 0.6 } },
+        { "p", { 0.5, 0.4, 0.94, 0.84, 0.06, 0.84 } } },
+      acc = { { { "r", 0.42, 0.84, 0.16, 0.14 }, { 120, 80, 45 } } }, star = { 0.5, 0.07, 0.09 } },
+}
+A.SEASON_BY = {}
+for i, s in ipairs(A.SEASON_ICONS) do A.SEASON_BY[s[1]] = s; s.month = i end
+-- "auto" follows the month
+function A.seasonIcon()
+    local v = A.get("season_icon", "auto")
+    if A.SEASON_BY[v] then return A.SEASON_BY[v] end
+    return A.SEASON_ICONS[tonumber(os.date("%m")) or 1]
+end
+
+local function inPrim(p, x, y)
+    local k = p[1]
+    if k == "c" then local dx, dy = x - p[2], y - p[3]; return dx * dx + dy * dy <= p[4] * p[4] end
+    if k == "e" then local dx, dy = (x - p[2]) / p[4], (y - p[3]) / p[5]; return dx * dx + dy * dy <= 1 end
+    if k == "r" then return x >= p[2] and x <= p[2] + p[4] and y >= p[3] and y <= p[3] + p[5] end
+    local pts, inside = p[2], false
+    local n = #pts / 2
+    local j = n
+    for i = 1, n do
+        local xi, yi, xj, yj = pts[2 * i - 1], pts[2 * i], pts[2 * j - 1], pts[2 * j]
+        if (yi > y) ~= (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi then inside = not inside end
+        j = i
+    end
+    return inside
+end
+local function inAny(list, x, y)
+    for _, p in ipairs(list) do if inPrim(p, x, y) then return true end end
+    return false
+end
+local SUB = { 0.2, 0.5, 0.8 }
+
+-- An icon `size` px square at x, y: filled from the bottom `frac` of the way
+-- in `fill`, the rest in `track`, with an outline in `line`.
+local function iconFill(bb, x, y, size, prims, frac, fill, track, line, key, under, inv)
+    if size < 8 then return end
+    size = floor(size)
+    local lw = max(1, size * 0.045)
+    local level = size * (1 - frac)
+    local runs = shapeRows(table.concat({ "ico", key, size, floor(frac * 200), ckey(fill), ckey(track), ckey(line), ckey(under) }, "|"),
+        0, 0, size, size, under, function(px, py)
+        local hits = 0
+        for _, sy in ipairs(SUB) do
+            for _, sx in ipairs(SUB) do
+                if inAny(prims, (px - 0.5 + sx) / size, (py - 0.5 + sy) / size) then hits = hits + 1 end
+            end
+        end
+        if hits == 0 then return nil end
+        local cov = hits / 9
+        local ux, uy = px / size, py / size
+        local d = lw / size
+        local edge = cov < 1 or not (inAny(prims, ux - d, uy) and inAny(prims, ux + d, uy)
+            and inAny(prims, ux, uy - d) and inAny(prims, ux, uy + d))
+        local col = edge and line or ((py >= level) and fill or track)
+        return col[1], col[2], col[3], cov
+    end)
+    paintRows(bb, runs, x, y, inv)
+end
+G.iconFill = iconFill
+
+-- A seasonal icon in the box x, y, w, h (square, centred).
+function G.seasonal(bb, x, y, w, h, frac, icon, o, under, inv)
+    local size = min(w, h)
+    if size < 8 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local ix, iy = floor(x + (w - size) / 2), floor(y + (h - size) / 2)
+    iconFill(bb, ix, iy, size, icon[4], frac, o.fill, o.track, o.line, icon[1], under, inv)
+    for _, a in ipairs(icon.acc or {}) do
+        local px0, py0 = ix, iy
+        local p = a[1]
+        if p[1] == "c" then
+            G.disc(bb, px0 + p[2] * size, py0 + p[3] * size, p[4] * size, a[2], o.fill, inv)
+        else
+            -- small solid touches: a polygon from the unit box
+            local pts
+            if p[1] == "r" then pts = { p[2], p[3], p[2] + p[4], p[3], p[2] + p[4], p[3] + p[5], p[2], p[3] + p[5] }
+            elseif p[1] == "e" then
+                pts = {}
+                for k = 0, 15 do
+                    local t = k / 16 * 2 * math.pi
+                    pts[#pts + 1], pts[#pts + 2] = p[2] + math.cos(t) * p[4], p[3] + math.sin(t) * p[5]
+                end
+            else pts = p[2] end
+            local abs = {}
+            for k = 1, #pts, 2 do abs[k], abs[k + 1] = px0 + pts[k] * size, py0 + pts[k + 1] * size end
+            shape(bb, abs, a[2], o.line, max(1, size * 0.02), under, inv)
+        end
+    end
+    -- the tree's star lights up when it's full
+    if icon.star and frac >= 1 and G.star then
+        G.star(bb, ix + icon.star[1] * size, iy + icon.star[2] * size, icon.star[3] * size * 1.6, { 255, 214, 60 }, o.line, under, inv)
+    end
+end
+
+-- A potion vial in the box: a round flask and a neck with a cork, the
+-- liquid `frac` of the way up. o = { fill, track, line, cork }
+function G.vial(bb, x, y, w, h, frac, o, under, inv)
+    if w < 8 or h < 14 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local R = min(w / 2, h * 0.36)
+    local cx = x + w / 2
+    local cyb = y + h - R
+    local neck_w = R * 0.62
+    local cork_h = max(3, h * 0.1)
+    local ny0 = y + cork_h * 0.7
+    local lw = max(1.5, R * 0.1)
+    local top_in, bot_in = ny0 + lw, cyb + R - lw
+    local level = bot_in - (bot_in - top_in) * frac
+    local ox, oy = floor(x), floor(y)
+    local ww, hh = ceil(w) + 2, ceil(h) + 2
+    local function outer(px, py)
+        local dx, dy = px - cx, py - cyb
+        return dx * dx + dy * dy <= R * R or (math.abs(px - cx) <= neck_w / 2 and py >= ny0 and py <= cyb)
+    end
+    local function inner(px, py)
+        local dx, dy = px - cx, py - cyb
+        local r = R - lw
+        return dx * dx + dy * dy <= r * r or (math.abs(px - cx) <= neck_w / 2 - lw and py >= ny0 + lw and py <= cyb)
+    end
+    local key = table.concat({ "vial", floor(w), floor(h), floor(frac * 200), ckey(o.fill), ckey(o.track), ckey(o.line), ckey(under),
+        floor((x - ox) * 10), floor((y - oy) * 10) }, "|")
+    local runs = shapeRows(key, 0, 0, ww, hh, under, function(lx, ly)
+        local px, py = ox + lx, oy + ly
+        local hits = 0
+        for _, sy in ipairs(SUB) do
+            for _, sx in ipairs(SUB) do if outer(px - 0.5 + sx, py - 0.5 + sy) then hits = hits + 1 end end
+        end
+        if hits == 0 then return nil end
+        local col
+        if hits < 9 or not inner(px, py) then col = o.line
+        elseif py >= level then col = o.fill
+        else col = o.track end
+        return col[1], col[2], col[3], hits / 9
+    end)
+    paintRows(bb, runs, ox, oy, inv)
+    -- the cork, and a few bubbles in the liquid
+    G.rrect(bb, floor(cx - neck_w * 0.62), floor(y), floor(neck_w * 1.24), floor(cork_h), max(1, floor(cork_h / 3)), o.cork, under, inv)
+    if frac > 0.15 then
+        local b = A.mix(o.fill, { 255, 255, 255 }, 0.55)
+        G.disc(bb, cx - R * 0.3, cyb + R * 0.25, max(1.2, R * 0.11), b, o.fill, inv)
+        G.disc(bb, cx + R * 0.22, cyb - R * 0.05, max(1, R * 0.08), b, o.fill, inv)
+        if frac > 0.6 then G.disc(bb, cx - R * 0.05, cyb - R * 0.45, max(1, R * 0.07), b, o.fill, inv) end
+    end
+end
+
+-- A bookmark ribbon hanging from the top of the box, as long as `frac` of
+-- it, a notch cut in its end; the full length shown faintly behind.
+-- o = { fill, track, line }
+function G.ribbon(bb, x, y, w, h, frac, o, under, inv)
+    if w < 4 or h < 12 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local notch = min(w * 0.5, h * 0.15)
+    local function strip(len, col, line)
+        if len < notch + 2 then len = notch + 2 end
+        local pts = { x, y, x + w, y, x + w, y + len, x + w / 2, y + len - notch, x, y + len }
+        shape(bb, pts, col, line, line and max(1, w * 0.06) or 0, under, inv)
+    end
+    strip(h, o.track, nil)
+    if frac > 0 then strip(h * frac, o.fill, o.line) end
+    -- the page edge it hangs from
+    G.rrect(bb, floor(x - w * 0.25), floor(y), floor(w * 1.5), max(2, floor(w * 0.18)), 1, o.line, under, inv)
+end
+
+-- A scroll lying across the box: rolled up at the left, unrolled `frac` of
+-- the way with a second roll where it stops. o = { fill, track, line, roll }
+function G.scroll(bb, x, y, w, h, frac, o, under, inv)
+    if w < 16 or h < 6 then return end
+    frac = clamp01(tonumber(frac) or 0)
+    if frac ~= frac then frac = 0 end
+    local rw = max(3, floor(h * 0.5))
+    local ph = max(3, floor(h * 0.74))
+    local py = floor(y + (h - ph) / 2)
+    local x0, x1 = x + rw / 2, x + w - rw / 2
+    local stop = x0 + (x1 - x0) * frac
+    -- what's still to read: a faint line
+    G.rrect(bb, floor(stop), floor(y + h / 2 - 1), max(0, floor(x1 - stop)), 2, 1, o.track, under, inv)
+    if stop > x0 + 1 then
+        G.rrect(bb, floor(x0), py, floor(stop - x0), ph, 0, o.fill, under, inv)
+        -- writing on the paper
+        local lc = A.mix(o.fill, o.line, 0.45)
+        for k = 1, 2 do
+            local ly = py + ph * k / 3
+            if stop - x0 > rw * 2 then
+                G.rrect(bb, floor(x0 + rw * 0.7), floor(ly), floor(stop - x0 - rw * 1.4), 1, 0, lc, o.fill, inv)
+            end
+        end
+    end
+    G.rrect(bb, floor(x), floor(y), rw, floor(h), max(1, floor(rw / 2)), o.roll, under, inv)
+    G.rrect(bb, floor(stop - rw / 2), floor(y), rw, floor(h), max(1, floor(rw / 2)), o.roll, under, inv)
+end
+
+-- Rings sharing one centre as a row of standing pictures (seasonal icons,
+-- vials, ribbons) in the square the outer ring fills, the campfire last.
+local function ringRow(bb, ox, oy, g, under, inv, ratio, one)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local side = 2 * R
+    local slots = n + (g.fire and 1 or 0)
+    local gap = max(2, floor(side * 0.05))
+    local bw = min(floor(side * ratio), floor((side - (slots - 1) * gap) / slots))
+    local bh = floor(side * 0.92)
+    local total = slots * bw + (slots - 1) * gap
+    local x = floor(ox + g.cx - total / 2)
+    local y = floor(oy + g.cy - bh / 2)
+    for i, r in ipairs(list) do one(bb, x + (i - 1) * (bw + gap), y, bw, bh, r, under, inv) end
+    groupFire(bb, g, x + n * (bw + gap) + bw / 2, y + bh, min(bw * 1.25, bh * 0.5), under, inv)
+end
+local function lineOf(c) return A.mix(c, { 0, 0, 0 }, 0.35) end
+-- Seasonal icons sit in a 2 x 2 grid in the square (one alone fills it),
+-- the campfire in the last cell. The first ring takes the icon's colour.
+function G.ringSeasonal(bb, ox, oy, g, under, inv)
+    local icon = A.seasonIcon()
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local x0, y0 = ox + g.cx - R, oy + g.cy - R
+    local function draw(r, i, x, y, size)
+        local fill = (i == 1) and icon[3] or r.fill
+        G.seasonal(bb, x, y, size, size, r.frac, icon, { fill = fill, track = r.track, line = lineOf(fill) }, under, inv)
+    end
+    if n == 1 and not g.fire then draw(list[1], 1, x0, y0, 2 * R) return end
+    local cell = R
+    local pad = R * 0.06
+    for i = 1, min(n, 4) do
+        local col, row = (i - 1) % 2, floor((i - 1) / 2)
+        draw(list[i], i, x0 + col * cell + pad, y0 + row * cell + pad, cell - 2 * pad)
+    end
+    if g.fire and n < 4 then
+        local col, row = n % 2, floor(n / 2)
+        groupFire(bb, g, x0 + col * cell + cell / 2, y0 + row * cell + cell * 0.92, cell * 0.72, under, inv)
+    end
+end
+function G.ringVials(bb, ox, oy, g, under, inv)
+    ringRow(bb, ox, oy, g, under, inv, 0.42, function(b, x, y, w, h, r, u, i)
+        G.vial(b, x, y, w, h, r.frac, { fill = r.fill, track = A.mix(u, r.track, 0.6), line = lineOf(r.fill),
+            cork = { 150, 104, 62 } }, u, i)
+    end)
+end
+function G.ringRibbons(bb, ox, oy, g, under, inv)
+    ringRow(bb, ox, oy, g, under, inv, 0.2, function(b, x, y, w, h, r, u, i)
+        G.ribbon(b, x, y, w, h, r.frac, { fill = r.fill, track = r.track, line = lineOf(r.fill) }, u, i)
+    end)
+end
+-- Scrolls stack like bars; the campfire under them.
+function G.ringScrolls(bb, ox, oy, g, under, inv)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local w = floor(2 * R)
+    local x = floor(ox + g.cx - R)
+    local sh = max(6, min(floor(list[1].t * 1.4), floor(2 * R * 0.62 / (n * 1.35))))
+    local gap = max(2, floor(sh * 0.4))
+    local total = n * sh + (n - 1) * gap
+    local y0 = (n == 1) and floor(oy + g.cy + R * 0.36) or floor(oy + g.cy - total / 2 - (g.fire and R * 0.2 or 0))
+    for i, r in ipairs(list) do
+        G.scroll(bb, x, y0 + (i - 1) * (sh + gap), w, sh, r.frac, {
+            fill = A.mix(under, r.fill, 0.35), track = r.track, line = lineOf(r.fill), roll = r.fill }, under, inv)
+    end
+    local room = oy + g.cy + R - (y0 + total)
+    if room > 12 and g.fire then
+        groupFire(bb, g, ox + g.cx, y0 + total + room * 0.95, min(room * 0.9, w * 0.4), under, inv)
+    end
+end
+
+-- Time of day, a small picture: a steaming mug in the morning, the sun in
+-- the afternoon, a lamp in the evening, the moon and stars at night.
+-- o = { ink, line, warm, sun, moon }
+function A.dayPart(hour)
+    hour = hour or tonumber(os.date("%H")) or 12
+    if hour >= 5 and hour < 11 then return "morning" end
+    if hour >= 11 and hour < 17 then return "afternoon" end
+    if hour >= 17 and hour < 21 then return "evening" end
+    return "night"
+end
+function G.timeIcon(bb, cx, cy, r, part, o, under, inv)
+    if r < 5 then return end
+    local lw = max(1, r * 0.12)
+    if part == "morning" then
+        -- a mug, its handle, and steam
+        local mw, mh = r * 1.1, r * 0.95
+        local mx, my = cx - mw / 2 - r * 0.12, cy - mh / 2 + r * 0.3
+        G.rrect(bb, floor(mx), floor(my), floor(mw), floor(mh), max(1, floor(r * 0.18)), o.warm, under, inv)
+        G.ring(bb, mx + mw + r * 0.12, my + mh * 0.45, r * 0.32, lw, 1, o.warm, o.warm, under, inv)
+        for k = -1, 1, 2 do
+            local sx = cx - r * 0.12 + k * r * 0.25
+            G.polyline(bb, { sx, my - r * 0.12, sx - r * 0.12, my - r * 0.4, sx + r * 0.08, my - r * 0.66 }, lw, o.line, under, inv)
+        end
+    elseif part == "afternoon" then
+        G.weather(bb, cx, cy, r, "sun", { sun = o.sun, line = o.line }, under, inv)
+    elseif part == "evening" then
+        -- a little lamp: shade, stand, base
+        local pts = { cx - r * 0.38, cy - r * 0.8, cx + r * 0.38, cy - r * 0.8, cx + r * 0.75, cy - r * 0.1, cx - r * 0.75, cy - r * 0.1 }
+        shape(bb, pts, o.warm, o.line, lw * 0.8, under, inv)
+        G.rrect(bb, floor(cx - lw / 2), floor(cy - r * 0.1), max(1, floor(lw)), floor(r * 0.75), 0, o.line, under, inv)
+        G.rrect(bb, floor(cx - r * 0.45), floor(cy + r * 0.62), floor(r * 0.9), max(2, floor(lw * 1.2)), 1, o.line, under, inv)
+    else
+        G.moon(bb, cx - r * 0.12, cy + r * 0.05, r * 0.72, 0.62, { lit = o.moon, dark = under, line = o.line }, under, inv)
+        if G.star then
+            G.star(bb, cx + r * 0.7, cy - r * 0.62, r * 0.28, o.moon, o.line, under, inv)
+            G.star(bb, cx + r * 0.82, cy + r * 0.3, r * 0.18, o.moon, o.line, under, inv)
+        end
+    end
+end
+
+-- ─── cat looks (1.10.0) ──────────────────────────────────────────────────────
+-- A sitting cat that fills from the bottom, paw prints around a ring, and a
+-- ball of yarn for the streak.
+A.CAT_ICON = { "cat", "Cat", { 232, 128, 52 }, {
+    { "e", 0.5, 0.68, 0.29, 0.28 },                                   -- body
+    { "c", 0.5, 0.33, 0.2 },                                          -- head
+    { "p", { 0.31, 0.27, 0.32, 0.04, 0.47, 0.17 } },                  -- ears
+    { "p", { 0.69, 0.27, 0.68, 0.04, 0.53, 0.17 } },
+    { "p", { 0.72, 0.9, 0.93, 0.82, 0.98, 0.6, 0.91, 0.58, 0.87, 0.76, 0.7, 0.8 } }, -- tail
+  },
+  acc = { { { "c", 0.42, 0.31, 0.035 }, { 34, 34, 34 } }, { { "c", 0.58, 0.31, 0.035 }, { 34, 34, 34 } },
+          { { "p", { 0.47, 0.38, 0.53, 0.38, 0.5, 0.42 } }, { 238, 119, 153 } } } }
+local PAW = { { "e", 0.5, 0.68, 0.25, 0.2 }, { "c", 0.24, 0.42, 0.1 }, { "c", 0.4, 0.24, 0.1 },
+              { "c", 0.6, 0.24, 0.1 }, { "c", 0.76, 0.42, 0.1 } }
+A.PAW = PAW
+
+-- Paw prints around the circle, clockwise from 12 o'clock, the first
+-- frac * n in `fill`.
+function G.ringPaws(bb, cx, cy, R, t, frac, track, fill, under, inv)
+    if not (R > 0 and R < 4096 and t > 0 and cx == cx and cy == cy) then return end
+    frac = A.clamp(tonumber(frac) or 0, 0, 1)
+    if frac ~= frac then frac = 0 end
+    local size = max(8, floor(t * 1.5))
+    local rm = R - t / 2
+    local n = max(6, min(24, floor(2 * math.pi * rm / (size * 1.15))))
+    local lit = floor(frac * n + 0.5)
+    if frac > 0 and lit == 0 then lit = 1 end
+    for i = 0, n - 1 do
+        local a = i / n * 2 * math.pi
+        local x, y = cx + rm * math.sin(a), cy - rm * math.cos(a)
+        local col = (i < lit) and fill or track
+        G.iconFill(bb, floor(x - size / 2 + 0.5), floor(y - size / 2 + 0.5), size, PAW, 1, col, col, col, "paw", under, inv)
+    end
+end
+
+-- Rings sharing one centre as cats in a 2 x 2 grid (one alone fills the
+-- square), the streak's picture in the last cell.
+function G.ringCats(bb, ox, oy, g, under, inv)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local x0, y0 = ox + g.cx - R, oy + g.cy - R
+    local icon = A.CAT_ICON
+    local function draw(r, i, x, y, size)
+        local fill = (i == 1) and icon[3] or r.fill
+        G.seasonal(bb, x, y, size, size, r.frac, icon, { fill = fill, track = r.track, line = A.mix(fill, { 0, 0, 0 }, 0.35) }, under, inv)
+    end
+    if n == 1 and not g.fire then draw(list[1], 1, x0, y0, 2 * R) return end
+    local cell, pad = R, R * 0.06
+    for i = 1, min(n, 4) do
+        local col, row = (i - 1) % 2, floor((i - 1) / 2)
+        draw(list[i], i, x0 + col * cell + pad, y0 + row * cell + pad, cell - 2 * pad)
+    end
+    if g.fire and n < 4 then
+        local col, row = n % 2, floor(n / 2)
+        A.G.streakPicture(bb, g, x0 + col * cell + cell / 2, y0 + row * cell + cell * 0.92, cell * 0.72, under, inv)
+    end
+end
+
+-- A ball of yarn on the ground at cx, by: as big as `level` (the streak
+-- against its goal), with its loose thread; a flat tangle at 0. Sparkles at
+-- 3 days in a row, a second strand colour at 7, like the campfire.
+-- o = { yarn, line, thread, streak }
+function G.yarn(bb, cx, by, size, level, o, under, inv)
+    if size < 10 then return end
+    level = clamp01(tonumber(level) or 0)
+    local lw = max(1, size * 0.035)
+    if level <= 0.001 then
+        -- an unravelled tangle
+        G.polyline(bb, { cx - size * 0.4, by - size * 0.04, cx - size * 0.15, by - size * 0.14, cx + size * 0.05, by - size * 0.02,
+            cx + size * 0.22, by - size * 0.16, cx + size * 0.4, by - size * 0.05 }, max(1.5, size * 0.05), o.yarn, under, inv)
+        return
+    end
+    local r = size * (0.16 + 0.26 * level)
+    local cy = by - r
+    G.disc(bb, cx, cy, r + lw, o.line, under, inv)
+    G.disc(bb, cx, cy, r, o.yarn, o.line, inv)
+    -- wound strands: arcs of bigger circles, kept inside the ball
+    local strand = A.mix(o.yarn, o.line, 0.45)
+    local function wrap(ox_, oy_, rr, col, w)
+        local run = {}
+        local function flush()
+            if #run >= 4 then G.polyline(bb, run, w, col, o.yarn, inv) end
+            run = {}
+        end
+        for k = 0, 48 do
+            local t = k / 48 * 2 * math.pi
+            local x, y = cx + ox_ + math.cos(t) * rr, cy + oy_ + math.sin(t) * rr
+            local dx, dy = x - cx, y - cy
+            if dx * dx + dy * dy <= (r * 0.86) ^ 2 then
+                run[#run + 1], run[#run + 2] = x, y
+            else
+                flush()
+            end
+        end
+        flush()
+    end
+    wrap(-r * 0.9, -r * 0.5, r * 1.15, strand, lw)
+    wrap(r * 0.95, -r * 0.35, r * 1.2, strand, lw)
+    wrap(-r * 0.2, r * 1.05, r * 1.25, strand, lw)
+    -- a week in a row: a second colour wound in
+    if (tonumber(o.streak) or 0) >= 7 then wrap(r * 0.3, -r * 1.1, r * 1.3, o.thread, lw * 1.4) end
+    -- the loose thread trailing off
+    G.polyline(bb, { cx + r * 0.7, cy + r * 0.72, cx + r * 1.2, by - lw, cx + size * 0.62, by - lw * 2 }, lw * 1.3, o.yarn, under, inv)
+    if (tonumber(o.streak) or 0) >= 3 and G.star then
+        G.star(bb, cx - r * 1.05, cy - r * 0.9, max(2, size * 0.08), { 255, 214, 60 }, o.line, under, inv)
+        G.star(bb, cx + r * 1.0, cy - r * 1.1, max(2, size * 0.06), { 255, 214, 60 }, o.line, under, inv)
+    end
+end
+
+-- The streak's picture in a group's place: the campfire or the yarn ball.
+function G.streakPicture(bb, g, cx, by, size, under, inv)
+    if not g.fire then return end
+    if g.fire.o and g.fire.o.yarn then G.yarn(bb, cx, by, size, g.fire.level, g.fire.o, under, inv)
+    else G.campfire(bb, cx, by, size, g.fire.level, g.fire.o, under, inv) end
 end
 
 -- ─── fonts and text ──────────────────────────────────────────────────────────
@@ -1213,7 +1795,7 @@ local function canvasClass()
         local inv = self.inv
         local under = (self.tone and self.tone.bg) or self.under
         local style = A.progressStyle()
-        if style == "bars" or style == "moons" or style == "batteries" then
+        if A.GROUP_STYLES[style] then
             -- rings sharing a centre become one set of bars, moons or batteries
             self._rings = self._rings or {}
             local key = cx .. ":" .. cy
@@ -1221,10 +1803,16 @@ local function canvasClass()
             if not g then
                 g = { cx = cx, cy = cy, list = {} }
                 self._rings[key] = g
-                local draw = (style == "moons" and G.ringMoons) or (style == "batteries" and G.ringBatteries) or G.ringBars
+                local draw = (style == "moons" and G.ringMoons) or (style == "batteries" and G.ringBatteries)
+                    or (style == "seasonal" and G.ringSeasonal) or (style == "vials" and G.ringVials)
+                    or (style == "ribbons" and G.ringRibbons) or (style == "scrolls" and G.ringScrolls)
+                    or (style == "cats" and G.ringCats) or G.ringBars
                 self:op(function(bb, ox, oy) draw(bb, ox, oy, g, under, inv) end)
             end
             g.list[#g.list + 1] = { R = R, t = t, frac = frac, track = track, fill = fill }
+            return
+        elseif style == "paws" then
+            self:op(function(bb, ox, oy) G.ringPaws(bb, ox + cx, oy + cy, R, t, frac, track, fill, under, inv) end)
             return
         elseif style == "dots" or style == "blocks" then
             local square = style == "blocks"

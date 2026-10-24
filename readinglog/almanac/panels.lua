@@ -123,8 +123,11 @@ end
 -- (Card looks > Streak) as big as the streak against its goal. With rings,
 -- dots or blocks it burns in the middle of the rings; with bars, moons or
 -- batteries it sits at the corner of their square.
-local function streakMark(c, tone, cx, cy, R, t, gap, streak, goal, col)
-    if A.look("streak") ~= "fire" then
+-- `left`: how much of the daily minutes goal is still to read (0..1), for
+-- the woodpile; nil without a goal.
+local function streakMark(c, tone, cx, cy, R, t, gap, streak, goal, col, left)
+    local look = A.look("streak")
+    if look ~= "fire" and look ~= "yarn" then
         c:ring(cx, cy, R - 2 * (t + gap), t, streak / goal, tone.track, col)
         return
     end
@@ -133,11 +136,24 @@ local function streakMark(c, tone, cx, cy, R, t, gap, streak, goal, col)
     local fire = {
         log = { 136, 88, 52 }, log_line = A.mix(tone.fg, { 70, 45, 25 }, 0.5),
         flame = { 248, 128, 40 }, core = { 255, 216, 90 }, ember = { 236, 104, 40 }, smoke = A.mix(tone.bg, tone.fg, 0.4),
+        streak = streak,
+        wood = (look == "fire" and A.look("wood") == "on" and left) or nil,
     }
-    if style == "rings" or style == "dots" or style == "blocks" then
+    if look == "yarn" then
+        fire = { yarn = { 238, 136, 170 }, line = A.mix(tone.fg, { 120, 40, 70 }, 0.5), thread = { 120, 170, 220 }, streak = streak }
+    end
+    local draw = (look == "yarn") and G.yarn or G.campfire
+    if style == "rings" or style == "dots" or style == "blocks" or style == "paws" then
         local hole = R - t - gap - t
-        local size = hole * 1.55
-        picture(c, function(bb, ox, oy, under, inv) G.campfire(bb, ox + cx, oy + cy + hole * 0.72, size, level, fire, under, inv) end)
+        -- paw prints reach further in than a ring
+        local size = hole * ((style == "paws") and 1.1 or 1.55)
+        -- no room for the woodpile in the rings: it goes by their corner
+        local wood = fire.wood
+        fire.wood = nil
+        picture(c, function(bb, ox, oy, under, inv)
+            draw(bb, ox + cx, oy + cy + hole * 0.72, size, level, fire, under, inv)
+            if wood then G.woodpile(bb, ox + cx + R * 0.74, oy + cy + R * 1.0, R * 0.62, wood, fire, under, inv) end
+        end)
         return
     end
     -- bars, moons, batteries: the fire takes a place among them
@@ -145,8 +161,16 @@ local function streakMark(c, tone, cx, cy, R, t, gap, streak, goal, col)
     if g then
         g.fire = { level = level, o = fire }
     else
-        picture(c, function(bb, ox, oy, under, inv) G.campfire(bb, ox + cx, oy + cy + R * 0.9, R * 0.8, level, fire, under, inv) end)
+        picture(c, function(bb, ox, oy, under, inv) draw(bb, ox + cx, oy + cy + R * 0.9, R * 0.8, level, fire, under, inv) end)
     end
+end
+-- Card looks > Time of day: a small picture by a card's heading.
+local function timeMark(c, tone, cx, cy, r)
+    if A.look("time_icon") ~= "on" then return end
+    local part = A.dayPart()
+    local o = { line = A.mix(tone.fg, tone.bg, 0.15), warm = { 214, 150, 84 }, sun = { 250, 196, 50 },
+                moon = A.luma(tone.bg) < 128 and { 250, 236, 180 } or { 236, 206, 96 } }
+    picture(c, function(bb, ox, oy, under, inv) G.timeIcon(bb, ox + cx, oy + cy, r, part, o, under, inv) end)
 end
 local function lineThrough(c, tone, px, pts)
     if A.chartStyle() == "line" and pts and #pts >= 4 then c:polyline(pts, max(2, px(3)), tone.accent2) end
@@ -418,7 +442,7 @@ end
 -- ════════════════════════════════════════════════════════════════════════════
 
 P.continue = {
-    does = "opens the book",
+    does = "Continue opens the book, Details its menu",
     title = "Continue reading", tone = "paper", ratio = 0.36, ratio_narrow = 0.62,
     summary = "Books in progress, with cover and time left. Works offline.",
 }
@@ -550,7 +574,8 @@ function P.continue.build(env)
         -- Squarer card: cover and titles on top, bar and buttons full width below.
         local pad = px(30)
         local inner = w - 2 * pad
-        local y_bar = footer(pad, inner, h - pad, h >= f(58) * 5)
+        local buttons = h >= f(58) * 5
+        local y_bar = footer(pad, inner, h - pad, buttons)
         local top_h = y_bar - px(18) - pad
         local cover_h = max(8, top_h)
         local cover_w = round(cover_h * 2 / 3)
@@ -559,7 +584,8 @@ function P.continue.build(env)
             cover_h = round(cover_w * 1.5)
         end
         c:cover(book.fp, pad, pad, cover_w, cover_h, { title = book.title, edge = edge })
-        c:region("open", pad, pad, cover_w, cover_h)
+        -- the cover opens the book only when there's no Continue button
+        if not buttons then c:region("open", pad, pad, cover_w, cover_h) end
         local tx = pad + cover_w + px(24)
         local tw = w - pad - tx
         local y = header(tx, tw, pad) + px(8)
@@ -586,7 +612,6 @@ function P.continue.build(env)
     local cover_h = h - 2 * pad_y
     local cover_w = round(cover_h * 2 / 3)
     c:cover(book.fp, pad_x, pad_y, cover_w, cover_h, { title = book.title, edge = edge })
-    c:region("open", pad_x, pad_y, cover_w, cover_h)
     local tx = pad_x + cover_w + px(38)
     local tw = w - tx - pad_x
     local y = header(tx, tw, pad_y + px(4)) + px(6)
@@ -597,6 +622,7 @@ function P.continue.build(env)
     local need = t_title.h + f(58) + f(26) * 1.4 + bar_h + px(40)
     local with_buttons = (bottom - y) >= need
     local y_bar = footer(tx, tw, bottom, with_buttons)
+    if not with_buttons then c:region("open", pad_x, pad_y, cover_w, cover_h) end
     c:put(t_title, tx, y)
     local prev_base, prev_px = y + t_title.base, t_title.px
     local author_y = y + t_title.h - px(8)
@@ -624,7 +650,10 @@ function P.continue.tap(env, region)
         return
     end
     if not fp then return end
-    if region == "details" then D.showDetails(env.ctx, fp) else D.openBook(env.ctx, fp) end
+    -- only the buttons (or the cover, on a card too small for them): a tap
+    -- anywhere else on the card does nothing
+    if region == "details" then D.showDetails(env.ctx, fp)
+    elseif region == "open" then D.openBook(env.ctx, fp) end
 end
 
 function P.continue.keep(region) return region == "next" end
@@ -668,7 +697,8 @@ function P.activity.build(env)
     end
     local pad = px(30)
     local t_label = c:label("Activity", fpx(22), pad, px(24), { bold = true, caps = true, color = tone.accent })
-    c:label("Today", fpx(22), w - pad, px(24), { color = tone.accent2, anchor = "r" })
+    local today_l = c:label("Today", fpx(22), w - pad, px(24), { color = tone.accent2, anchor = "r" })
+    timeMark(c, tone, w - pad - ((today_l and today_l.w) or px(60)) - px(22), px(24) + t_label.h / 2, px(15))
 
     local pages = st and st.today.pages or 0
     local mins = st and floor(st.today.secs / 60 + 0.5) or 0
@@ -686,7 +716,7 @@ function P.activity.build(env)
     local cols = tone.series
     c:ring(cx, cy, R, t, pages / page_goal, tone.track, cols[1])
     c:ring(cx, cy, R - t - gap, t, mins / min_goal, tone.track, cols[2])
-    streakMark(c, tone, cx, cy, R, t, gap, streak, streak_goal, cols[3])
+    streakMark(c, tone, cx, cy, R, t, gap, streak, streak_goal, cols[3], st and (1 - mins / min_goal) or nil)
 
     local lines = {
         st and A.plural(pages, "page", "pages") or "\xE2\x80\xA6",
@@ -2243,6 +2273,14 @@ function P.bookclub.build(env)
     end
     if not env.sample then A.state.bookclub_files = files end
     return c
+end
+
+-- Holding the card: tick this month's picks (the same list as in its
+-- settings), so a new month's book is two taps away.
+function P.bookclub.hold(env)
+    if not (A.S and A.S.clubPicks) then return false end
+    A.S.clubPicks(env.ctx, env)
+    return true
 end
 
 function P.bookclub.tap(env, region)
@@ -5095,7 +5133,7 @@ function MINI.today(c, env, x, y, w, h, px, fpx, tone)
             local streak_goal = max(1, tonumber(A.get("activity_streak_goal", 7)) or 7)
             c:ring(cx, cy, R, rt, pages / page_goal, tone.track, cols[1])
             c:ring(cx, cy, R - rt - rg, rt, mins / D.dailyMinutesGoal(), tone.track, cols[2])
-            streakMark(c, tone, cx, cy, R, rt, rg, streak, streak_goal, cols[3])
+            streakMark(c, tone, cx, cy, R, rt, rg, streak, streak_goal, cols[3], 1 - mins / D.dailyMinutesGoal())
             local fx = tx + dia + px(14)
             if one then
                 local xx = fx
@@ -5163,7 +5201,7 @@ function MINI.rings(c, env, x, y, w, h, px, fpx, tone)
     local g = max(1, round(R * 0.055))
     c:ring(cx, cy, R, t, pages / page_goal, tone.track, cols[1])
     c:ring(cx, cy, R - t - g, t, mins / min_goal, tone.track, cols[2])
-    streakMark(c, tone, cx, cy, R, t, g, streak, streak_goal, cols[3])
+    streakMark(c, tone, cx, cy, R, t, g, streak, streak_goal, cols[3], 1 - mins / min_goal)
     if with_text then
         local step = min(floor((2 * R) / 3), texts[1].h + px(6))
         for i = 1, 3 do c:put(texts[i], cx + R + px(16), cy + (i - 2) * step, "l", "mid") end
