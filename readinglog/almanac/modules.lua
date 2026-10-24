@@ -556,7 +556,15 @@ local function buildDashboard(ctx, w, h)
         end
         local env = { w = w, h = head_h, ts = ts, see = see }
         local ok, hc = pcall(P.heading, env, kicker, pageLabel(page), nav)
-        if ok and hc then c:sub(hc, ox, oy + y, "heading|") end
+        if ok and hc then
+            c:sub(hc, ox, oy + y, "heading|")
+            -- the critter in what's left of the heading (critter.lua)
+            if A.critter and hc.free_w and hc.free_w > 0 then
+                local cy = floor(head_h * 0.06)
+                pcall(A.critter.draw, c, ox + hc.free_x, oy + y + cy, hc.free_w, head_h - 2 * cy, page, ctx,
+                    "heading|critter", floor(w * 0.5))
+            end
+        end
         c.layout = c.layout or {}
         c.layout.head_y, c.layout.head_h = oy + y, head_h
         y = y + head_h + floor(gap * 0.6)
@@ -578,6 +586,13 @@ local function buildDashboard(ctx, w, h)
             local env = makeEnv(name, ctx, width, rh, { nested = true, slot = 1, page = page_look, see = see })
             local child = buildPanel(name, env)
             c:sub(child, ox + x, oy + y, name .. "|")
+            -- Today's banner is that page's title row: the critter wanders
+            -- in the room its clock leaves (when you haven't put lines there)
+            if name == "banner" and not heading and A.critter and child.free_w and child.free_w > 0 then
+                local cy = floor(rh * 0.06)
+                pcall(A.critter.draw, c, ox + x + child.free_x, oy + y + cy, child.free_w, rh - 2 * cy, page, ctx,
+                    "heading|critter", floor(w * 0.5))
+            end
             if P[name].tick then c.clock_y, c.clock_h = oy + y, rh end
             -- the rest of the panel: a plain tap on it
             c:region(name .. "|", ox + x, oy + y, width, rh)
@@ -657,6 +672,20 @@ end
 
 function Dashboard.on_tap(ctx)
     local kind, a, b = dashSplit(dashRegion(ctx))
+    if kind == "nav" and a == "critter" then
+        -- another remark from the critter on this page
+        local tabs, pages = dashTabs()
+        local page = pages[currentPage(tabs)]
+        if A.critter then pcall(A.critter.next, page, ctx.refresh) end
+        -- only the critter's band of the screen changes
+        local box = page and A.state.critter_box and A.state.critter_box[page.id]
+        if box then
+            H.repaint(ctx, { strip = { x = box.x, y = box.y, w = box.w, h = box.h }, reason = "critter" })
+        else
+            inkRefresh(ctx)
+        end
+        return
+    end
     if kind == "nav" then
         if stepMonth(a) then inkRefresh(ctx, true) end
         return

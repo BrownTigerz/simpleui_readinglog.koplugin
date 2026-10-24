@@ -204,6 +204,10 @@ function P.banner.heading(env)
 
     -- your two lines, right-aligned, in the same small-over-big pattern
     local room = w - 2 * pad - left_w - px(48)
+    -- without them, the Dashboard's critter may use the room (critter.lua)
+    if line1 == "" and line2 == "" and room > 0 then
+        c.free_x, c.free_w = pad + left_w + px(48), room
+    end
     if room > px(120) and (line1 ~= "" or line2 ~= "") then
         local t1 = line1 ~= "" and c:text(line1, fpx(24), { bold = true, caps = true, color = muted, max_w = room }) or nil
         local f2 = fpx(50)
@@ -3063,6 +3067,14 @@ function P.heading(env, kicker, title, nav)
     end
     if t_k then c:put(t_k, inset, y); y = y + t_k.h - tight end
     c:put(t_t, inset - round(t_t.px * 0.03), y)
+    -- What's left of the row after the text (and before the month buttons):
+    -- the Dashboard puts the critter there (critter.lua).
+    do
+        local text_end = inset + max(t_k and t_k.w or 0, t_t.w) + inset + px(24)
+        local right = w
+        if nav then right = (btn.now and btn.now.x or btn.prev.x) - px(24) end
+        c.free_x, c.free_w = text_end, max(0, right - text_end)
+    end
     if nav then
         local bs = btn.bs
         local by = floor((h - bs) / 2)

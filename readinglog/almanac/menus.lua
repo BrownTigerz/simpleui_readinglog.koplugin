@@ -547,6 +547,18 @@ function S.dashboardMenu(mctx, ctx_menu, o)
     local content = {
         { text = "Pages and cards" .. ELLIPSIS, keep_menu_open = true,
           callback = function() A.dashEditPages(mctx, nil) end },
+        {
+            text = "Critter remarks",
+            help_text = "SimpleUI's Tiny Critter peeks into each page and says something about its numbers. "
+                .. "Tap it for another remark. Needs SimpleUI 3.0 with its Tiny Critter.",
+            enabled_func = function() return A.critter and A.critter.available() end,
+            checked_func = function() return A.critter and A.critter.enabled() end,
+            keep_menu_open = true,
+            callback = function()
+                A.set("critter_peek", A.get("critter_peek", true) == false)
+                after()
+            end,
+        },
         radioItem("Margin around the page",
             function() return { { "none", "None" }, { "small", "Small" }, { "medium", "Medium" } } end,
             function()
