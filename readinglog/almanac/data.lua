@@ -184,6 +184,7 @@ function D.reading(limit)
                 local item = {
                     fp = fp, title = info.title, author = info.author,
                     pct = pct or 0, pages = tonumber(pages),
+                    opened = tonumber(hist[i].time),   -- last opened (history)
                 }
                 local okl, left = pcall(A.host.timeLeft, fp, item.pct)
                 item.left_min = okl and tonumber(left) or nil
