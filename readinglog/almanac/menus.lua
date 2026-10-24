@@ -559,6 +559,39 @@ function S.dashboardMenu(mctx, ctx_menu, o)
                 after()
             end,
         },
+        {
+            text = "    Statistics remarks",
+            help_text = "Remarks about your numbers: goals, pace, records, weekends, the library.",
+            enabled_func = function() return A.critter and A.critter.enabled() end,
+            checked_func = function() return A.get("critter_stats", true) ~= false end,
+            keep_menu_open = true,
+            callback = function()
+                A.set("critter_stats", A.get("critter_stats", true) == false)
+                after()
+            end,
+        },
+        {
+            text = "    Book suggestions",
+            help_text = "Remarks that suggest a book: the next in a series, a quick finish, one you left a while ago, something different.",
+            enabled_func = function() return A.critter and A.critter.enabled() end,
+            checked_func = function() return A.get("critter_sug", true) ~= false end,
+            keep_menu_open = true,
+            callback = function()
+                A.set("critter_sug", A.get("critter_sug", true) == false)
+                after()
+            end,
+        },
+        {
+            text = "    Streak remarks",
+            help_text = "Streaks, comebacks and getting back into the habit.",
+            enabled_func = function() return A.critter and A.critter.enabled() end,
+            checked_func = function() return A.get("critter_streak", true) ~= false end,
+            keep_menu_open = true,
+            callback = function()
+                A.set("critter_streak", A.get("critter_streak", true) == false)
+                after()
+            end,
+        },
         radioItem("Margin around the page",
             function() return { { "none", "None" }, { "small", "Small" }, { "medium", "Medium" } } end,
             function()
