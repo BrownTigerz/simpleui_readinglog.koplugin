@@ -138,7 +138,29 @@ A.THEMES = {
               surface = { 255, 238, 204 }, tint = { 238, 221, 170 }, fg = { 34, 17, 0 }, border = { 68, 51, 34 },
               page = { 255, 238, 204 }, page_fg = { 34, 17, 0 } },
 }
-A.THEME_ORDER = { "white", "dark", "paper" }
+-- Themes from 1.9.0: softer colour families (on a black-and-white screen
+-- they show as light greys).
+A.THEMES.forest = { label = "Forest", accent = "green",
+    surface = { 236, 243, 228 }, tint = { 218, 232, 204 }, fg = { 22, 44, 22 }, border = { 62, 96, 52 },
+    page = { 236, 243, 228 }, page_fg = { 22, 44, 22 } }
+A.THEMES.latte = { label = "Latte", accent = "brown",
+    surface = { 247, 236, 222 }, tint = { 234, 216, 194 }, fg = { 58, 34, 18 }, border = { 122, 84, 52 },
+    page = { 247, 236, 222 }, page_fg = { 58, 34, 18 } }
+A.THEMES.night_sky = { label = "Night sky", accent = "sky",
+    surface = { 18, 24, 40 }, tint = { 34, 42, 64 }, fg = { 232, 236, 248 }, border = { 92, 104, 140 }, thin = true,
+    page = { 18, 24, 40 }, page_fg = { 232, 236, 248 } }
+A.THEME_ORDER = { "white", "dark", "paper", "forest", "latte", "night_sky" }
+
+-- How progress and charts are drawn (1.9.0).
+A.PROGRESS_STYLES = { { "rings", "Rings" }, { "bars", "Bars" }, { "dots", "Dots" }, { "blocks", "Pixel blocks" } }
+A.CHART_STYLES = { { "bars", "Bars" }, { "line", "Line" }, { "stems", "Dots on stems" } }
+local function pick(list, v, default)
+    for _, o in ipairs(list) do if o[1] == v then return v end end
+    return default
+end
+function A.progressStyle() return pick(A.PROGRESS_STYLES, A.get("progress_style", "rings"), "rings") end
+function A.chartStyle() return pick(A.CHART_STYLES, A.get("chart_style", "bars"), "bars") end
+
 A.DEFAULT_THEME = "white"
 -- names from earlier versions
 local THEME_ALIAS = { noir = "dark" }
@@ -548,6 +570,54 @@ function G.ring(bb, cx, cy, R, t, frac, track, fill, under, inv)
     end
 end
 
+-- Progress as dots or pixel blocks around the same circle: n marks clockwise
+-- from 12 o'clock, the first frac * n in `fill`.
+function G.ringDots(bb, cx, cy, R, t, frac, track, fill, under, inv, square)
+    if not (R > 0 and R < 4096 and t > 0 and cx == cx and cy == cy) then return end
+    frac = A.clamp(tonumber(frac) or 0, 0, 1)
+    if frac ~= frac then frac = 0 end
+    local rm = R - t / 2
+    local n = max(8, min(40, floor(2 * math.pi * rm / (t * (square and 1.35 or 1.5)))))
+    local lit = floor(frac * n + 0.5)
+    if frac > 0 and lit == 0 then lit = 1 end
+    for i = 0, n - 1 do
+        local a = i / n * 2 * math.pi
+        local x, y = cx + rm * math.sin(a), cy - rm * math.cos(a)
+        local col = (i < lit) and fill or track
+        if square then
+            local sz = max(2, floor(t * 0.86))
+            G.rrect(bb, floor(x - sz / 2 + 0.5), floor(y - sz / 2 + 0.5), sz, sz, 0, col, under, inv)
+        else
+            G.disc(bb, x, y, max(1, t * 0.44), col, under, inv)
+        end
+    end
+end
+
+-- Rings sharing one centre drawn as bars, in the square the outer ring fills:
+-- stacked in the middle, or one bar under the middle (where a ring's own
+-- figure usually sits).
+function G.ringBars(bb, ox, oy, g, under, inv)
+    local list = {}
+    for i, r in ipairs(g.list) do list[i] = r end
+    table.sort(list, function(a, b) return a.R > b.R end)
+    local n = #list
+    if n == 0 then return end
+    local R = list[1].R
+    local w = floor(2 * R)
+    local x = floor(ox + g.cx - R)
+    local bh = max(3, min(floor(list[1].t * 0.9), floor(2 * R * 0.62 / (n * 1.45))))
+    local gap = max(2, floor(bh * 0.45))
+    local total = n * bh + (n - 1) * gap
+    local y0 = (n == 1) and floor(oy + g.cy + R * 0.42) or floor(oy + g.cy - total / 2)
+    for i, r in ipairs(list) do
+        local y = y0 + (i - 1) * (bh + gap)
+        G.rrect(bb, x, y, w, bh, bh / 2, r.track, under, inv)
+        local f = A.clamp(tonumber(r.frac) or 0, 0, 1)
+        if f ~= f then f = 0 end
+        if f > 0 then G.rrect(bb, x, y, max(bh, floor(w * f + 0.5)), bh, bh / 2, r.fill, under, inv) end
+    end
+end
+
 -- ─── fonts and text ──────────────────────────────────────────────────────────
 -- Everything here is sized in real pixels, derived from the panel's size.
 -- KOReader's Font:getFace takes a size that it scales for the screen itself
@@ -687,6 +757,8 @@ local function canvasClass()
     end
 
     function C:disc(cx, cy, r, rgb, under)
+        -- the dot in the middle of rings drawn as bars has no place there
+        if self._rings and self._rings[cx .. ":" .. cy] then return end
         local inv = self.inv
         under = under or (self.tone and self.tone.bg) or self.under
         self:op(function(bb, ox, oy) G.disc(bb, ox + cx, oy + cy, r, rgb, under, inv) end)
@@ -695,6 +767,24 @@ local function canvasClass()
     function C:ring(cx, cy, R, t, frac, track, fill)
         local inv = self.inv
         local under = (self.tone and self.tone.bg) or self.under
+        local style = A.progressStyle()
+        if style == "bars" then
+            -- rings sharing a centre become one set of bars
+            self._rings = self._rings or {}
+            local key = cx .. ":" .. cy
+            local g = self._rings[key]
+            if not g then
+                g = { cx = cx, cy = cy, list = {} }
+                self._rings[key] = g
+                self:op(function(bb, ox, oy) G.ringBars(bb, ox, oy, g, under, inv) end)
+            end
+            g.list[#g.list + 1] = { R = R, t = t, frac = frac, track = track, fill = fill }
+            return
+        elseif style == "dots" or style == "blocks" then
+            local square = style == "blocks"
+            self:op(function(bb, ox, oy) G.ringDots(bb, ox + cx, oy + cy, R, t, frac, track, fill, under, inv, square) end)
+            return
+        end
         self:op(function(bb, ox, oy) G.ring(bb, ox + cx, oy + cy, R, t, frac, track, fill, under, inv) end)
     end
 
