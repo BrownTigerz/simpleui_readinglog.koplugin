@@ -12,6 +12,15 @@ pace.", "47 unread books waiting.").
     critter for another one. Remarks are dealt like the critter's own phrases:
     none comes round again before the others on that page have been seen.
   * Nothing moves and nothing runs on a timer.
+  * Insights: getting back into the habit, your best day this month, book
+    milestones, what this month needs for the yearly goal, weekend reading,
+    a book minutes from the end, one you left a while ago, the next in a
+    series you just finished, something different after a run of one genre.
+    Each only when the stats back it (enough days read, real minutes). The
+    big news of the day (goal done, a record, a comeback) comes first.
+  * A book you passed on ("Another suggestion") isn't suggested again that day.
+  * Settings: statistics remarks, book suggestions and streak remarks can be
+    turned off on their own.
 
 Settings > Critter Remarks turns it off (stored as critter_peek).
 ]]
@@ -105,9 +114,71 @@ local function tally(books, field)
     return out
 end
 
-local function librarySuggestions(lib)
+local function librarySuggestions(lib, recent)
     local books = lib.books or {}
     local sug = {}
+    recent = recent or {}
+    local by_fp = {}
+    for _, b in ipairs(books) do by_fp[b.fp] = b end
+    -- the next in a series you finished a book of in the last 60 days
+    local now = os.time()
+    for _, r in ipairs(recent) do
+        if now - (r.at or 0) > 60 * 86400 then break end
+        local b = by_fp[r.fp]
+        if b and b.series then
+            local key = b.series:lower()
+            for _, c in ipairs(D.pickCandidates(books, {})) do
+                if c.series and c.series:lower() == key then
+                    sug.series_next = { done = r.title or b.title, name = b.series, book = c }
+                    break
+                end
+            end
+            if sug.series_next then break end
+        end
+    end
+    -- your last 3 finished share a genre: something from another one you like
+    if #recent >= 3 then
+        local common
+        for _, g in ipairs(recent[1].genres or {}) do
+            local k = g:lower()
+            local all = true
+            for i = 2, 3 do
+                local has = false
+                for _, h in ipairs(recent[i].genres or {}) do if h:lower() == k then has = true end end
+                if not has then all = false break end
+            end
+            if all then common = g break end
+        end
+        if common then
+            local ck = common:lower()
+            for _, g in ipairs(tally(books, "genres")) do
+                if g.name:lower() ~= ck then
+                    local cands = {}
+                    for _, c in ipairs(D.pickCandidates(books, { genres = { g.name } })) do
+                        local same = false
+                        for _, h in ipairs(c.genres or {}) do if h:lower() == ck then same = true end end
+                        if not same then cands[#cands + 1] = c end
+                    end
+                    if #cands > 0 then
+                        sug.variety = { same = common, other = g.name, book = dayIndex(cands, "variety") }
+                        break
+                    end
+                end
+            end
+        end
+    end
+    -- unread books by authors you've finished
+    local fin_auth = {}
+    for _, b in ipairs(books) do
+        if b.status == "finished" then for _, a in ipairs(b.authors or {}) do fin_auth[a:lower()] = true end end
+    end
+    local n = 0
+    for _, b in ipairs(books) do
+        if b.status == "unread" then
+            for _, a in ipairs(b.authors or {}) do if fin_auth[a:lower()] then n = n + 1 break end end
+        end
+    end
+    if n >= 3 then sug.discover = n end
     -- an author you finish, with a book of theirs not started yet
     for _, a in ipairs(tally(books, "authors")) do
         local cands = D.pickCandidates(books, { authors = { a.name } })
@@ -159,7 +230,7 @@ suggestions = function(f)
             .. "|" .. (f.lib.counts.on_hold or 0)
         local c = A.state.critter_sug
         if not (c and c.key == key) then
-            local ok, v = pcall(librarySuggestions, f.lib)
+            local ok, v = pcall(librarySuggestions, f.lib, f.finished_recent)
             c = { key = key, value = ok and v or {} }
             A.state.critter_sug = c
         end
@@ -169,6 +240,21 @@ suggestions = function(f)
     end
     -- from the books in progress and your usual day
     local avg_min = f.avg_secs and f.avg_secs / 60 or nil
+    local now = os.time()
+    for _, b in ipairs(f.reading or {}) do
+        -- a quick win: minutes from the end
+        if not f.sug.quick and b.left_min and b.left_min >= 2 and b.left_min <= 25 then
+            f.sug.quick = { book = b, left = b.left_min }
+        end
+        -- one you left a while ago, well under way
+        if not f.sug.stale and b.opened and now - b.opened >= 14 * 86400 and (b.pct or 0) >= 0.15 and b.pct <= 0.9 then
+            f.sug.stale = { book = b, days = floor((now - b.opened) / 86400) }
+        end
+    end
+    -- a few quiet days: the book you were on
+    if f.idle and f.idle >= 3 and f.reading and f.reading[1] then
+        f.sug.recover = { book = f.reading[1], days = f.idle }
+    end
     for _, b in ipairs(f.reading or {}) do
         if b.left_min and b.left_min > 0 and avg_min and avg_min >= 5 then
             if not f.sug.tonight and b.left_min <= avg_min * 1.5 then
@@ -212,6 +298,95 @@ questFacts = function(f)
             end
         end
     end
+end
+
+-- Reading days: the run up to today (or yesterday), the quiet stretch before
+-- it, the days since you last read, your best day this month, weekends.
+local MIN_DAY_SECS = 60
+local function backKey(t, back)
+    return os.date("%Y-%m-%d", os.time{ year = t.year, month = t.month, day = t.day - back, hour = 12 })
+end
+local function rhythm(f)
+    local days, t = f.st.days, f.t
+    local BACK = 120
+    local function secs(i)
+        if i == 0 then return f.today_secs or 0 end
+        local r = days[backKey(t, i)]
+        return r and r.secs or 0
+    end
+    local function read(i) return secs(i) >= MIN_DAY_SECS end
+    local i, run = read(0) and 0 or 1, 0
+    while i < BACK and read(i) do run = run + 1; i = i + 1 end
+    local gap = 0
+    while i < BACK and not read(i) do gap = gap + 1; i = i + 1 end
+    if i < BACK then f.run, f.gap = run, gap end      -- a reading day before the gap
+    if not read(0) then
+        local k = 1
+        while k < BACK and not read(k) do k = k + 1 end
+        if k < BACK then f.idle = k - 1 end
+    end
+    -- best day of the month: 20 min+, a week in, 5 other days read
+    if t.day >= 7 and (f.today_secs or 0) >= 1200 then
+        local others, top = 0, 0
+        for d = 1, t.day - 1 do
+            local sv = secs(d)
+            if sv >= MIN_DAY_SECS then others = others + 1; if sv > top then top = sv end end
+        end
+        if others >= 5 and f.today_secs > top then f.day_record = true end
+    end
+    -- weekends against weekdays, the last 8 weeks (12+ reading days)
+    local we, wd, n = 0, 0, 0
+    for d = 1, 56 do
+        local sv = secs(d)
+        if sv >= MIN_DAY_SECS then n = n + 1 end
+        local wday = os.date("*t", os.time{ year = t.year, month = t.month, day = t.day - d, hour = 12 }).wday
+        if wday == 1 or wday == 7 then we = we + sv else wd = wd + sv end
+    end
+    local we_avg, wd_avg = we / 16, wd / 40
+    if n >= 12 and wd_avg > 0 and we_avg >= 1.6 * wd_avg then
+        f.weekend, f.weekend_x = "weekend", we_avg / wd_avg
+    elseif n >= 12 and we_avg > 0 and wd_avg >= 1.6 * we_avg then
+        f.weekend, f.weekend_x = "weekday", wd_avg / we_avg
+    end
+end
+
+-- Books finished this month and the two before, newest first (with `at`).
+local function recentFinished(f, refresh)
+    local t, list = f.t, {}
+    for back = 0, 2 do
+        local y, m = t.year, t.month - back
+        if m < 1 then y, m = y - 1, m + 12 end
+        local ok, fin = pcall(D.finishedIn, refresh, y, m)
+        if ok and type(fin) == "table" then
+            for _, b in ipairs(fin) do
+                list[#list + 1] = { fp = b.fp, title = b.title, genres = b.genres,
+                    at = os.time{ year = b.year or y, month = b.month or m, day = b.day or 1, hour = 12 } }
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.at > b.at end)
+    f.finished_recent = list
+    -- a milestone, reached in the last 3 days
+    local n = f.year_done
+    if n and list[1] and os.time() - list[1].at <= 3 * 86400 and os.date("%Y", list[1].at) == tostring(t.year)
+            and (({ [5] = 1, [10] = 1, [25] = 1, [50] = 1, [75] = 1, [100] = 1 })[n] or (n > 100 and n % 50 == 0)) then
+        f.milestone = n
+    end
+end
+
+-- Books you passed on today ("Another suggestion"), by file.
+local function dismissed()
+    local d = A.get("critter_dismissed")
+    if type(d) == "table" and d.day == os.date("%Y-%m-%d") and type(d.fps) == "table" then return d.fps end
+    return {}
+end
+function C.dismiss(fp)
+    if type(fp) ~= "string" then return end
+    local fps = dismissed()
+    local keep = {}
+    for k, v in pairs(fps) do keep[k] = v end
+    keep[fp] = true
+    A.set("critter_dismissed", { day = os.date("%Y-%m-%d"), fps = keep })
 end
 
 -- Everything the remarks read, gathered once per build. Missing pieces stay nil.
@@ -284,6 +459,16 @@ local function facts(refresh)
     end
     f.days_in_month = tonumber(os.date("%d", os.time{ year = t.year, month = t.month + 1, day = 0, hour = 12 })) or 30
     f.month_left = f.days_in_month - t.day + 1
+    if f.st and type(f.st.days) == "table" then pcall(rhythm, f) end
+    pcall(recentFinished, f, refresh)
+    -- what this month needs for the yearly pace (1 to 3 books, from the 10th)
+    if f.year_goal and f.year_goal > 0 and f.year_done and f.year_done < f.year_goal and t.day >= 10 then
+        local eom = os.time{ year = t.year, month = t.month + 1, day = 0, hour = 12 }
+        local diy = tonumber(os.date("%j", os.time{ year = t.year, month = 12, day = 31, hour = 12 })) or 365
+        local need = math.ceil(f.year_goal * (tonumber(os.date("%j", eom)) or 1) / diy - f.year_done - 1e-9)
+        if need >= 1 and need <= 3 then f.pace_need = need end
+    end
+    f.dismissed = dismissed()
     pcall(suggestions, f)
     pcall(questFacts, f)
     return f
@@ -439,10 +624,82 @@ R.library = {
       sub = function(f) return string.format("%d%% done already.", floor(f.closest.pct * 100)) end },
 }
 
+-- ─── insights ────────────────────────────────────────────────────────────────
+local INSIGHTS = {
+    comeback = { id = "t_comeback", mood = "love",
+        when = function(f) return f.run == 1 and (f.gap or 0) >= 4 and (f.today_secs or 0) >= MIN_DAY_SECS end,
+        text = function(f) return string.format("First reading day in %s.", n_(f.gap + 1, "day", "days")) end,
+        sub = function() return "Welcome back!" end },
+    momentum = { id = "t_momentum", mood = "cheer",
+        when = function(f) return (f.run or 0) >= 2 and f.run <= 5 and (f.gap or 0) >= 4 and (f.today_secs or 0) >= MIN_DAY_SECS end,
+        text = function(f) return string.format("%s in a row.", n_(f.run, "reading day", "reading days")) end,
+        sub = function() return "You're getting back into the habit." end },
+    day_record = { id = "t_day_record", mood = "surprised",
+        when = function(f) return f.day_record end,
+        text = function() return "Your best reading day this month!" end,
+        sub = function(f) return string.format("%s and counting.", A.fmtMinutes(mins(f.today_secs))) end },
+    milestone = { id = "y_milestone", mood = "party",
+        when = function(f) return f.milestone ~= nil end,
+        text = function(f) return string.format("That's book %d this year!", f.milestone) end,
+        sub = function() return "Your shelf is looking lighter." end },
+    pace = { id = "y_pace", mood = "curious",
+        when = function(f) return f.pace_need ~= nil end,
+        text = function(f) return string.format("%s this month", n_(f.pace_need, "more book", "more books")) end,
+        sub = function() return "would put you right on your yearly pace." end },
+    weekend = { id = "r_weekend", mood = "curious",
+        when = function(f) return f.weekend ~= nil end,
+        text = function(f)
+            local x = f.weekend_x >= 1.9 and "about twice as much" or "a lot more"
+            return f.weekend == "weekend" and string.format("You read %s on weekends.", x)
+                or string.format("You read %s on weekdays.", x)
+        end,
+        sub = function(f) return f.weekend == "weekend" and "Got a book lined up for Saturday?" or "Weekends are for naps, I guess." end },
+    discover = { id = "l_discover", mood = "love",
+        when = function(f) return f.sug and f.sug.discover end,
+        text = function(f) return string.format("%s by authors you've finished.", n_(f.sug.discover, "unread book", "unread books")) end,
+        sub = function() return "Old friends, new stories." end },
+}
+R.today[#R.today + 1] = INSIGHTS.comeback
+R.today[#R.today + 1] = INSIGHTS.momentum
+R.today[#R.today + 1] = INSIGHTS.day_record
+R.trends[#R.trends + 1] = INSIGHTS.comeback
+R.trends[#R.trends + 1] = INSIGHTS.momentum
+R.trends[#R.trends + 1] = INSIGHTS.weekend
+R.monthly[#R.monthly + 1] = INSIGHTS.day_record
+R.monthly[#R.monthly + 1] = INSIGHTS.pace
+R.yearly[#R.yearly + 1] = INSIGHTS.milestone
+R.yearly[#R.yearly + 1] = INSIGHTS.pace
+R.library[#R.library + 1] = INSIGHTS.discover
+
 -- ─── suggestions (remarks with a book: a tap offers to open it) ─────────────
 local TAP = "Tap me."
 local function bookOf(get) return function(f) local b = get(f); return b and b.fp or nil end end
 local S_ = {
+    series_next = { id = "s_series_next", mood = "love",
+        when = function(f) return f.sug and f.sug.series_next end,
+        text = function(f) return string.format("Ready for more %s?", short(f.sug.series_next.name, 24)) end,
+        sub = function(f) return string.format("%s is next. %s", q(f.sug.series_next.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.series_next.book end) },
+    variety = { id = "s_variety", mood = "playful",
+        when = function(f) return f.sug and f.sug.variety end,
+        text = function(f) return string.format("Three %s books in a row.", short(f.sug.variety.same, 18):lower()) end,
+        sub = function(f) return string.format("Something different? %s. %s", q(f.sug.variety.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.variety.book end) },
+    quick = { id = "s_quick", mood = "cheer",
+        when = function(f) return f.sug and f.sug.quick end,
+        text = function(f) return string.format("Only %s left in %s.", A.fmtMinutes(f.sug.quick.left), q(f.sug.quick.book.title)) end,
+        sub = function() return "A little time to spare? " .. TAP end,
+        fp = bookOf(function(f) return f.sug.quick.book end) },
+    stale = { id = "s_stale", mood = "shy",
+        when = function(f) return f.sug and f.sug.stale end,
+        text = function(f) return string.format("You were %d%% into %s.", floor(f.sug.stale.book.pct * 100), q(f.sug.stale.book.title)) end,
+        sub = function() return "Give it another chapter? " .. TAP end,
+        fp = bookOf(function(f) return f.sug.stale.book end) },
+    recover = { id = "s_recover", mood = "shy",
+        when = function(f) return f.sug and f.sug.recover end,
+        text = function(f) return string.format("%d quiet days.", f.sug.recover.days) end,
+        sub = function(f) return string.format("Fancy a few pages of %s? %s", q(f.sug.recover.book.title), TAP) end,
+        fp = bookOf(function(f) return f.sug.recover.book end) },
     author = { id = "s_author", mood = "love",
         when = function(f) return f.sug and f.sug.author end,
         text = function(f) return string.format("You've finished %s by %s.", n_(f.sug.author.n, "book", "books"), short(f.sug.author.name, 22)) end,
@@ -506,11 +763,11 @@ local S_ = {
         fp = bookOf(function(f) return f.closest end) },
 }
 local function addAll(list, names) for _, n in ipairs(names) do list[#list + 1] = S_[n] end end
-addAll(R.today,   { "tonight", "boost", "hour", "hold", "quest_daily" })
-addAll(R.yearly,  { "author", "series", "quest_book" })
-addAll(R.monthly, { "tonight", "quest_book", "genre" })
-addAll(R.trends,  { "boost", "hour", "quest_daily" })
-addAll(R.library, { "author", "series", "genre", "hold", "pick" })
+addAll(R.today,   { "tonight", "boost", "hour", "hold", "quest_daily", "quick", "recover", "stale", "series_next" })
+addAll(R.yearly,  { "author", "series", "quest_book", "series_next" })
+addAll(R.monthly, { "tonight", "quest_book", "genre", "quick" })
+addAll(R.trends,  { "boost", "hour", "quest_daily", "recover" })
+addAll(R.library, { "author", "series", "genre", "hold", "pick", "series_next", "variety", "stale" })
 
 -- ─── more ways to say each remark ────────────────────────────────────────────
 -- VARIANTS[id]: other wordings of a remark (its own wording above is the
@@ -755,6 +1012,64 @@ local TIERS = {
     r_streak_gap = { meh = { mood = "sleepy", text = function(f) return string.format("Best streak: %d.", f.best) end, sub = s("Records are tiring.") } },
 }
 
+-- wordings and moods of the insights
+VARIANTS.t_comeback = {
+    { mood = "happy", text = s("Look who's back!"), sub = function(f) return string.format("First reading in %s.", n_(f.gap + 1, "day", "days")) end },
+    { mood = "cheer", text = s("Back to the books."), sub = s("I saved your spot.") },
+}
+VARIANTS.t_momentum = {
+    { mood = "happy", text = s("Back on a roll."), sub = function(f) return string.format("%s running.", n_(f.run, "day", "days")) end },
+    { mood = "love", text = function(f) return string.format("Day %d of reading again.", f.run) end, sub = s("This feels like the start of something.") },
+}
+VARIANTS.t_day_record = {
+    { mood = "party", text = function(f) return string.format("%s today. A monthly best.", A.fmtMinutes(mins(f.today_secs))) end, sub = s("I'll remember this one.") },
+    { mood = "cheer", text = s("No day this month beats today."), sub = s("And it isn't over.") },
+}
+VARIANTS.y_milestone = {
+    { mood = "love", text = function(f) return string.format("%d books finished this year.", f.milestone) end, sub = s("A milestone. I'm putting it on the fridge.") },
+    { mood = "cheer", text = function(f) return string.format("Book number %d. Done.", f.milestone) end, sub = s("What's next on the pile?") },
+}
+VARIANTS.y_pace = {
+    { mood = "playful", text = function(f) return string.format("Finish %s this month?", n_(f.pace_need, "book", "books")) end, sub = s("That keeps your yearly goal on track.") },
+    { mood = "cheer", text = s("Your yearly goal is in reach."), sub = function(f) return string.format("%s this month does it.", n_(f.pace_need, "more book", "more books")) end },
+}
+VARIANTS.s_quick = {
+    { mood = "curious", text = function(f) return string.format("Got %s?", A.fmtMinutes(f.sug.quick.left)) end,
+      sub = function(f) return string.format("That's all %s needs. %s", q(f.sug.quick.book.title), TAP) end },
+    { mood = "playful", text = s("The finish line is right there."),
+      sub = function(f) return string.format("%s, about %s to go. %s", q(f.sug.quick.book.title), A.fmtMinutes(f.sug.quick.left), TAP) end },
+}
+VARIANTS.s_stale = {
+    { mood = "curious", text = function(f) return string.format("%s misses you.", q(f.sug.stale.book.title)) end,
+      sub = function(f) return string.format("%d%% in, %s ago. %s", floor(f.sug.stale.book.pct * 100), n_(f.sug.stale.days, "day", "days"), TAP) end },
+}
+VARIANTS.s_recover = {
+    { mood = "sleepy", text = s("Ready when you are."),
+      sub = function(f) return string.format("%s is right where you left it. %s", q(f.sug.recover.book.title), TAP) end },
+    { mood = "curious", text = s("Even ten minutes counts."),
+      sub = function(f) return string.format("How about %s? %s", q(f.sug.recover.book.title), TAP) end },
+}
+VARIANTS.s_series_next = {
+    { mood = "curious", text = function(f) return string.format("You just finished %s.", q(f.sug.series_next.done)) end,
+      sub = function(f) return string.format("%s is next. %s", q(f.sug.series_next.book.title), TAP) end },
+}
+VARIANTS.s_variety = {
+    { mood = "curious", text = function(f) return string.format("Fancy a break from %s?", short(f.sug.variety.same, 18):lower()) end,
+      sub = function(f) return string.format("Some %s: %s. %s", short(f.sug.variety.other, 16):lower(), q(f.sug.variety.book.title), TAP) end },
+}
+TIERS.t_comeback = { grumpy = { mood = "grumpy", text = s("Oh, so you DO remember me."), sub = s("Fine. Welcome back.") } }
+TIERS.t_momentum = { grumpy = { mood = "playful", text = function(f) return string.format("%s in a row. Took you long enough.", n_(f.run, "day", "days")) end } }
+TIERS.t_day_record = { grumpy = { mood = "grumpy", text = s("Best day this month."), sub = s("Don't let it go to your head.") },
+                       radiant = { mood = "party", text = s("A record day! Look at you go!") } }
+TIERS.y_milestone = { grumpy = { mood = "grumpy", text = function(f) return string.format("%d books. Fine, I'm impressed.", f.milestone) end },
+                      radiant = { mood = "party", text = function(f) return string.format("%d books this year! Unstoppable!", f.milestone) end } }
+TIERS.s_quick = { grumpy = { mood = "grumpy", text = function(f) return string.format("%s won't finish itself.", q(f.sug.quick.book.title)) end,
+                             sub = function(f) return string.format("About %s. You know you want to. %s", A.fmtMinutes(f.sug.quick.left), TAP) end },
+                  meh = { mood = "sleepy", text = function(f) return string.format("%s, then %s is done.", A.fmtMinutes(f.sug.quick.left), q(f.sug.quick.book.title)) end,
+                          sub = s("One chapter, then we can both rest. " .. TAP) } }
+TIERS.s_recover = { grumpy = { mood = "grumpy", text = function(f) return string.format("%s. Not that I'm counting.", n_(f.sug.recover.days, "day", "days")) end,
+                               sub = function(f) return string.format("%s would cheer me up. %s", q(f.sug.recover.book.title), TAP) end } }
+
 -- Pages the reader made: anything from the general pools.
 -- Remarks about a book in progress: tapping the bubble opens that book.
 local CLOSEST_FP = function(f) return f.closest and f.closest.fp or nil end
@@ -785,14 +1100,40 @@ end
 -- ─── picking ─────────────────────────────────────────────────────────────────
 -- A.state.critter[kind] = { day, id }: the remark a page shows today.
 
+-- Which switch a remark is under: "sug" (book suggestions), "streak"
+-- (streaks and comebacks) or "stats" (the rest).
+local STREAK_IDS = { t_comeback = true, t_momentum = true }
+local function groupOf(id)
+    if id:sub(1, 2) == "s_" then return "sug" end
+    if id:find("streak", 1, true) or STREAK_IDS[id] then return "streak" end
+    return "stats"
+end
+C.SWITCHES = { stats = "critter_stats", sug = "critter_sug", streak = "critter_streak" }
+
 local function eligible(pool, f)
     local ids, by = {}, {}
+    local on = {}
+    for g, key in pairs(C.SWITCHES) do on[g] = A.get(key, true) ~= false end
+    local passed = f.dismissed or {}
     for _, r in ipairs(pool) do
-        local ok, yes = pcall(r.when, f)
-        if ok and yes then ids[#ids + 1] = r.id; by[r.id] = r end
+        if on[groupOf(r.id)] then
+            local ok, yes = pcall(r.when, f)
+            if ok and yes and r.fp and r.id:sub(1, 2) == "s_" then
+                -- not a book you passed on today
+                local okf, fp = pcall(r.fp, f)
+                if okf and fp and passed[fp] then yes = false end
+            end
+            if ok and yes then ids[#ids + 1] = r.id; by[r.id] = r end
+        end
     end
     return ids, by
 end
+
+-- The day's big news comes first: once a day each, before the dealt remarks.
+local FIRST = { "t_goal_done", "y_goal_done", "y_milestone", "t_day_record", "t_streak_best", "r_streak_best",
+                "t_comeback", "t_momentum", "s_series_next" }
+local FIRST_SET = {}
+for _, id in ipairs(FIRST) do FIRST_SET[id] = true end
 
 local function deal(kind, ids, skip)
     local k = kit()
@@ -860,7 +1201,24 @@ local function remark(page, refresh, advance, want_book)
     A.state.critter = A.state.critter or {}
     local cur = A.state.critter[kind]
     local today = os.date("%Y-%m-%d")
-    if advance or not (cur and cur.day == today and by[cur.id]) then
+    -- big news not yet shown today on this page takes the turn: on a tap, or
+    -- when the remark on show isn't news itself (news that came up midway
+    -- through the day shows once, then stays like any remark)
+    local first
+    local cur_today = cur and cur.day == today and by[cur.id]
+    if not want_book and (advance or not (cur_today and FIRST_SET[cur.id])) then
+        A.state.critter_first = A.state.critter_first or {}
+        local seen = A.state.critter_first
+        if seen.day ~= today then seen = { day = today }; A.state.critter_first = seen end
+        for _, id in ipairs(FIRST) do
+            if by[id] and not seen[kind .. ":" .. id] then first = id break end
+        end
+        if first then seen[kind .. ":" .. first] = true end
+    end
+    if first then
+        cur = { day = today, id = first, v = dealWording(kind, by[first]) }
+        A.state.critter[kind] = cur
+    elseif advance or not (cur and cur.day == today and by[cur.id]) then
         local id = deal(kind, ids, cur and cur.id)
         cur = { day = today, id = id, v = dealWording(kind, by[id]) }
         A.state.critter[kind] = cur
@@ -1092,12 +1450,9 @@ end
 
 local function hasBookRemark(page, refresh)
     local pool = poolFor(page)
-    local f = facts(refresh)
-    for _, r in ipairs(pool) do
-        if r.fp then
-            local ok, yes = pcall(r.when, f)
-            if ok and yes then return true end
-        end
+    local ids, by = eligible(pool, facts(refresh))
+    for _, id in ipairs(ids) do
+        if by[id].fp and id:sub(1, 2) == "s_" then return true end
     end
     return false
 end
@@ -1124,7 +1479,7 @@ function C.talk(page, ctx, redraw)
         opener = nil   -- the bubble already says which book
         options = {
             { text = "Open it", on_pick = function() D.openBook(ctx, fp) end },
-            { text = "Another suggestion", on_pick = function() another(true) end },
+            { text = "Another suggestion", on_pick = function() C.dismiss(fp); another(true) end },
         }
     else
         local can_suggest = hasBookRemark(page, refresh)
