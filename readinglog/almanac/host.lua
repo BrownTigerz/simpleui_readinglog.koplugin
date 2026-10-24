@@ -301,7 +301,8 @@ local function sidecar(fp)
     if SH and SH.sidecarData then
         local ok, d = pcall(SH.sidecarData, fp, true)
         if ok and type(d) == "table" then return d end
-        if ok then return nil end
+        -- nothing from Simple UI (it can miss a book for a moment, e.g.
+        -- while a menu is open): read the book's settings ourselves below
     elseif SH and SH._cacheGet then
         -- Simple UI 2.7.x: its cache, when it has this book
         local ok, d = pcall(SH._cacheGet, fp)
