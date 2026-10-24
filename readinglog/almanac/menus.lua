@@ -418,11 +418,23 @@ function S.lookMenu(mctx)
                     function(v) A.set("accent2", v ~= "matched" and v or nil) end, after),
                 radioItem("Progress style", function() return A.PROGRESS_STYLES end, A.progressStyle,
                     function(v) A.set("progress_style", v ~= "rings" and v or nil) end, after),
+                (function()
+                    local it = radioItem("Seasonal icon", function()
+                            local out = { { "auto", "By month" } }
+                            for _, ic in ipairs(A.SEASON_ICONS) do out[#out + 1] = { ic[1], ic[2] } end
+                            return out
+                        end,
+                        function() local v = A.get("season_icon", "auto"); return A.SEASON_BY[v] and v or "auto" end,
+                        function(v) A.set("season_icon", v ~= "auto" and v or nil) end, after)
+                    it.help_text = "With Progress style > Seasonal: the icon your progress fills. By month changes with the calendar: a snowflake in January, a heart in February, a shamrock, a raindrop, a flower, the sun, a maple leaf, a sailboat, an apple, a pumpkin, a poppy in November and a Christmas tree in December."
+                    it.enabled_func = function() return A.progressStyle() == "seasonal" end
+                    return it
+                end)(),
                 radioItem("Chart style", function() return A.CHART_STYLES end, A.chartStyle,
                     function(v) A.set("chart_style", v ~= "bars" and v or nil) end, after),
                 {
                     text = "Card looks" .. ELLIPSIS,
-                    help_text = "Pictures instead of a card's usual chart: a constellation or your critter on a trail for the Year goal, an hourglass for the Monthly challenge, weather for This week, tree rings for Time read by month, a campfire for the streak. Or a set: Night sky or Trail.",
+                    help_text = "Pictures instead of a card's usual chart: a constellation or your critter on a trail for the Year goal, an hourglass for the Monthly challenge, weather for This week, tree rings for Time read by month, a campfire for the streak (sparks at 3 days in a row, a bigger glow at 7, and a woodpile that burns down as you near your daily goal), a time-of-day picture by Activity's heading. Or a set: Night sky, Trail, or a preset that also picks the theme: Cozy cabin, Midnight reader, Minimal focus, Seasonal.",
                     sub_item_table_func = function()
                         local items = {}
                         for _, set in ipairs(A.LOOK_SETS) do
@@ -430,7 +442,7 @@ function S.lookMenu(mctx)
                                 text = "Set: " .. set[2],
                                 keep_menu_open = true,
                                 callback = function()
-                                    for k, v in pairs(set[3]) do A.set(k, v) end
+                                    for k, v in pairs(set[3]) do A.set(k, v ~= false and v or nil) end
                                     after()
                                 end,
                             }
