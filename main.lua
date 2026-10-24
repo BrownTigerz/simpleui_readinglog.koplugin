@@ -1,4 +1,4 @@
--- Reading Log for SimpleUI v1.8.0, by TK. Licensed AGPL-3.0.
+-- Reading Log for SimpleUI v1.8.1, by TK. Licensed AGPL-3.0.
 -- Bundles the Reading Log kit by stevenzamora1
 -- (https://github.com/stevenzamora1/reading-log-simpleui) — thank you!
 -- Built for Simple UI by Doctor Hetfield
