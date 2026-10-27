@@ -434,7 +434,7 @@ function S.lookMenu(mctx)
                     function(v) A.set("chart_style", v ~= "bars" and v or nil) end, after),
                 {
                     text = "Card looks" .. ELLIPSIS,
-                    help_text = "Pictures instead of a card's usual chart: a constellation or your critter on a trail for the Year goal, an hourglass for the Monthly challenge, weather for This week, tree rings for Time read by month, a campfire for the streak (sparks at 3 days in a row, a bigger glow at 7, and a woodpile that burns down as you near your daily goal), a time-of-day picture by Activity's heading. Or a set: Night sky, Trail, or a preset that also picks the theme: Cozy cabin, Midnight reader, Minimal focus, Seasonal.",
+                    help_text = "Pictures instead of a card's usual chart: a constellation or your critter on a trail for the Year goal, an hourglass for the Monthly challenge, weather for This week, tree rings for Time read by month, a campfire for the streak (sparks at 3 days in a row, a bigger glow at 7, and a woodpile that burns down as you near your daily goal), a time-of-day picture by Activity's heading. Or a set: Night sky, Trail, or a preset that also picks the theme: Cozy cabin, Midnight reader, Minimal focus, Seasonal, Cat lover.",
                     sub_item_table_func = function()
                         local items = {}
                         for _, set in ipairs(A.LOOK_SETS) do
@@ -508,7 +508,7 @@ local function heightItem(mctx, after)
         function() return A.cardHeightPct(mctx.pfx, mctx.mod_id) end,
         function(v) A.set(key, v ~= A.HEIGHT_DEF and v or nil) end,
         { min = A.HEIGHT_MIN, max = A.HEIGHT_MAX, step = 5, unit = "%", default = A.HEIGHT_DEF,
-          description = "Height of this card, against the shape it was designed at.\n100% is the default." },
+          description = "Height of this card, against its designed size.\n100% is the default." },
         after)
 end
 
