@@ -1,3 +1,7 @@
+> **Discontinued.** This plugin is retired. Its replacement is the **Reading Log Tweaks** patch (`2-readinglog-tweaks.lua`) in [BrownTigerz/-KOReader.patches](https://github.com/BrownTigerz/-KOReader.patches), which hooks the official [reading-log plugin](https://github.com/stevenzamora1/reading-log) (1.4+) instead of this fork. This repo will be deleted in a week's time (around 6 November 2026).
+>
+> To move over: delete the old `simpleui_readinglog.koplugin` folder, install the official reading-log plugin, and drop the patch in `koreader/patches/`.
+
 # Reading Log for SimpleUI
 
 Runs [Reading Log](https://github.com/stevenzamora1/reading-log-simpleui) (by stevenzamora1, AGPL-3.0) as SimpleUI home screen modules, with extra layout, night mode and fine-tuning options. No Bookshelf needed.
